@@ -49,7 +49,7 @@ These parameters can be varied:
 ### Supported features by spatial index
 
 | Index \ Feature | Point keys | Box keys | Bulk-load | Insert | Erase | Box window query | Nearest query |
-| --- | :---:
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | Boost R-Tree | + | + | + | + | + | + | + |
 | Nanoflann | + | +<sup>1</sup> | + | | | +<sup>1</sup> | for points only |
 | GEOS STR-tree | +<sup>2</sup> | + | + | | | + | |
@@ -73,8 +73,8 @@ This is an example extracted from the test results on a Dell Precision 5560 with
 
 It's from the Load-Query-Destroy scenario with 1 million boxes of the [Maricopa County parcels](https://hub.arcgis.com/datasets/dbf139379db946e1b10a2f15672c142d/about) dataset
 
-Operation | Spatial Index | Time |
-| --- | :---:
+| Operation | Spatial Index | Time |
+| --- | --- | ---: |
 | Bulk Load | Boost R-tree 1_86 | 126167 |
 | Bulk Load | GEOS 3.13.0 QuadTree | 187083 |
 | Bulk Load | GEOS 3.13.0 TemplateSTRTree | 193315 |
