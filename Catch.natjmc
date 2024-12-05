@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+Copy this file to
+	C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\Common7\Packages\Debugger\Visualizers
+or
+	C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Packages\Debugger\Visualizers
+-->
+
+<NonUserCode xmlns="http://schemas.microsoft.com/vstudio/debugger/jmc/2015">
+
+  <!-- Modules -->
+  <!--<Module Name="ModuleSpec" />
+  <Module Name="ModuleSpec" Company="CompanyName" />-->
+
+  <!-- Files -->
+  <!--<File Name="FileSpec"/>-->
+  <File Name="*\catch2\*" />
+
+  <!-- Functions (slowest) -->
+  <!--<Function Name="FunctionSpec" Module="ModuleSpec" ExceptionImplementation="true" />-->
+
+</NonUserCode>

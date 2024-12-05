@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- Visual Studio debug visualizers. Add this file to some project -->
+
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+  <Type Name="GeoToolbox::Span&lt;*&gt;">
+    <DisplayString>{{ size={count_} }}</DisplayString>
+    <Expand>
+      <Item Name="[size]" ExcludeView="simple">count_</Item>
+      <ArrayItems>
+        <Size>count_</Size>
+        <ValuePointer>data_</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <Type Name="std::array&lt;*,2&gt;">
+    <DisplayString>[ {_Elems[0],g}, {_Elems[1],g} ]</DisplayString>
+    <Expand>
+      <ArrayItems>
+        <Size>2</Size>
+        <ValuePointer>_Elems</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <Type Name="GeoToolbox::Box&lt;*,*&gt;">
+    <Intrinsic Name="min" Expression="($T1*)ends_._Elems[0]._Elems" />
+    <Intrinsic Name="max" Expression="($T1*)ends_._Elems[1]._Elems" />
+    <DisplayString Condition="min()[0] != min()[0]">&lt;empty&gt;</DisplayString>
+    <DisplayString Condition="min()[0] == min()[0]">{ends_._Elems[0],g} - {ends_._Elems[1],g}</DisplayString>
+    <Expand>
+      <Item Name="Min">ends_._Elems[0],g</Item>
+      <Item Name="Max">ends_._Elems[1],g</Item>
+      <Item Name="CenterX">( max()[0] + min()[0] ) / 2,g</Item>
+      <Item Name="CenterY">( max()[1] + min()[1] ) / 2,g</Item>
+      <Item Name="Width">max()[0] - min()[0],g</Item>
+      <Item Name="Height">max()[1] - min()[1],g</Item>
+      <Item Name="Area">( max()[1] - min()[1] ) * ( max()[0] - min()[0] ),g</Item>
+    </Expand>
+  </Type>
+
+</AutoVisualizer>

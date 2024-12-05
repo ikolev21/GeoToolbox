@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <PropertyGroup>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <RunCodeAnalysis Condition=" '${ENABLE_CODEANALYSIS}' == 'ON' And '$(Configuration)' == 'Release' ">true</RunCodeAnalysis>
+    <CodeAnalysisRuleSet>${CMAKE_CURRENT_SOURCE_DIR}/MsvcAnalysis.ruleset</CodeAnalysisRuleSet>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalOptions>/external:I"${FETCHCONTENT_BASE_DIR}" %(AdditionalOptions)</AdditionalOptions>
+      <ExternalWarningLevel>Level1</ExternalWarningLevel>
+      <DisableAnalyzeExternal>true</DisableAnalyzeExternal>
+      <TreatAngleIncludeAsExternal>true</TreatAngleIncludeAsExternal>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+</Project>
