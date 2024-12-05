@@ -71,27 +71,65 @@ Also, Nanoflann offers crude support for modifying the index by simply attaching
 
 This is an example extracted from the test results on a Dell Precision 5560 with i7-11850H 2.50GHz, code compiled with MSVC 2022 17.10.
 
-It's from the Load-Query-Destroy scenario with 1 million boxes of the [Maricopa County parcels](https://hub.arcgis.com/datasets/dbf139379db946e1b10a2f15672c142d/about) dataset
+It's from the Load-Query-Destroy scenario with 1 million boxes of the [Maricopa County parcels](https://hub.arcgis.com/datasets/dbf139379db946e1b10a2f15672c142d/) dataset
+and 1 million points of the [Maricopa County parcel points](https://hub.arcgis.com/datasets/dbf139379db946e1b10a2f15672c142d/) dataset.
+The results for each operation are sorted by ascending time.
 
-| Operation | Spatial Index | Time |
-| --- | --- | ---: |
-| Bulk Load | Boost R-tree 1_86 | 126167 |
-| Bulk Load | GEOS 3.13.0 QuadTree | 187083 |
-| Bulk Load | GEOS 3.13.0 TemplateSTRTree | 193315 |
-| Bulk Load | nanoflann 0x161 Static | 150867 |
-| Bulk Load | std::unordered_set | 180460 |
-| Bulk Load | std::vector | 1233 |
-| Window Query | Boost R-tree 1_86 | 163 |
-| Window Query | GEOS 3.13.0 QuadTree | 525 |
-| Window Query | GEOS 3.13.0 TemplateSTRTree | 332 |
-| Window Query | nanoflann 0x161 Static | 230 |
-| Window Query | std::unordered_set | 1350289 |
-| Window Query | std::vector | 55169 |
-| Destroy | Boost R-tree 1_86 | 5408 |
-| Destroy | GEOS 3.13.0 QuadTree | 30723 |
-| Destroy | GEOS 3.13.0 TemplateSTRTree | 11169 |
-| Destroy | nanoflann 0x161 Static | 576 |
-| Destroy | std::unordered_set | 57827 |
-| Destroy | std::vector | 281 |
+| Operation | Key | Dataset | Spatial Index | Time (μs) |
+| --- | :---: | --- | --- | ---: |
+| Bulk Load | box | Maricopa_Parcels.shp | std::vector | 1233 |
+| Bulk Load | box | Maricopa_Parcels.shp | Boost R-tree 1_86 | 126167 |
+| Bulk Load | box | Maricopa_Parcels.shp | nanoflann 0x161 Static | 150867 |
+| Bulk Load | box | Maricopa_Parcels.shp | std::unordered_set | 180460 |
+| Bulk Load | box | Maricopa_Parcels.shp | GEOS 3.13.0 QuadTree | 187083 |
+| Bulk Load | box | Maricopa_Parcels.shp | GEOS 3.13.0 TemplateSTRTree | 193315 |
+| Destroy | box | Maricopa_Parcels.shp | std::vector | 281 |
+| Destroy | box | Maricopa_Parcels.shp | nanoflann 0x161 Static | 576 |
+| Destroy | box | Maricopa_Parcels.shp | Boost R-tree 1_86 | 5408 |
+| Destroy | box | Maricopa_Parcels.shp | GEOS 3.13.0 TemplateSTRTree | 11169 |
+| Destroy | box | Maricopa_Parcels.shp | GEOS 3.13.0 QuadTree | 30723 |
+| Destroy | box | Maricopa_Parcels.shp | std::unordered_set | 57827 |
+| Query Box | box | Maricopa_Parcels.shp | Boost R-tree 1_86 | 163 |
+| Query Box | box | Maricopa_Parcels.shp | nanoflann 0x161 Static | 230 |
+| Query Box | box | Maricopa_Parcels.shp | GEOS 3.13.0 TemplateSTRTree | 332 |
+| Query Box | box | Maricopa_Parcels.shp | GEOS 3.13.0 QuadTree | 525 |
+| Query Box | box | Maricopa_Parcels.shp | std::vector | 55169 |
+| Query Box | box | Maricopa_Parcels.shp | std::unordered_set | 1350289 |
+| Query Nearest 3 | box | Maricopa_Parcels.shp | Boost R-tree 1_86 | 111 |
+| Query Nearest 3 | box | Maricopa_Parcels.shp | std::vector | 123944 |
+| Query Nearest 3 | box | Maricopa_Parcels.shp | std::unordered_set | 1499563 |
+| Bulk Load | point | Maricopa_Parcel_Points.shp | std::vector | 1237 |
+| Bulk Load | point | Maricopa_Parcel_Points.shp | nanoflann 0x161 Static | 77560 |
+| Bulk Load | point | Maricopa_Parcel_Points.shp | Boost R-tree 1_86 | 125835 |
+| Bulk Load | point | Maricopa_Parcel_Points.shp | std::unordered_set | 180688 |
+| Bulk Load | point | Maricopa_Parcel_Points.shp | GEOS 3.13.0 TemplateSTRTree | 188054 |
+| Bulk Load | point | Maricopa_Parcel_Points.shp | Spatial++ K-d Tree 2.1.8 | 279372 |
+| Bulk Load | point | Maricopa_Parcel_Points.shp | GEOS 3.13.0 QuadTree | 986275 |
+| Destroy | point | Maricopa_Parcel_Points.shp | std::vector | 271 |
+| Destroy | point | Maricopa_Parcel_Points.shp | nanoflann 0x161 Static | 381 |
+| Destroy | point | Maricopa_Parcel_Points.shp | Boost R-tree 1_86 | 5334 |
+| Destroy | point | Maricopa_Parcel_Points.shp | GEOS 3.13.0 TemplateSTRTree | 11441 |
+| Destroy | point | Maricopa_Parcel_Points.shp | std::unordered_set | 56055 |
+| Destroy | point | Maricopa_Parcel_Points.shp | Spatial++ K-d Tree 2.1.8 | 116175 |
+| Destroy | point | Maricopa_Parcel_Points.shp | GEOS 3.13.0 QuadTree | 1047829 |
+| Query Box | point | Maricopa_Parcel_Points.shp | nanoflann 0x161 Static | 114 |
+| Query Box | point | Maricopa_Parcel_Points.shp | Boost R-tree 1_86 | 184 |
+| Query Box | point | Maricopa_Parcel_Points.shp | GEOS 3.13.0 TemplateSTRTree | 409 |
+| Query Box | point | Maricopa_Parcel_Points.shp | Spatial++ K-d Tree 2.1.8 | 1868 |
+| Query Box | point | Maricopa_Parcel_Points.shp | GEOS 3.13.0 QuadTree | 6201 |
+| Query Box | point | Maricopa_Parcel_Points.shp | std::vector | 36248 |
+| Query Box | point | Maricopa_Parcel_Points.shp | std::unordered_set | 1321718 |
+| Query Nearest 3 | point | Maricopa_Parcel_Points.shp | nanoflann 0x161 Static | 57 |
+| Query Nearest 3 | point | Maricopa_Parcel_Points.shp | Boost R-tree 1_86 | 104 |
+| Query Nearest 3 | point | Maricopa_Parcel_Points.shp | std::vector | 50807 |
+| Query Nearest 3 | point | Maricopa_Parcel_Points.shp | Spatial++ K-d Tree 2.1.8 | 53293 |
+| Query Nearest 3 | point | Maricopa_Parcel_Points.shp | std::unordered_set | 1343358 |
 
 The full results can be found [here](https://github.com/ikolev21/ikolev21.github.io/blob/main/CompareSpatialIndices_IKDP5560_v143_x64.tsv)
+
+Some conclusions that can be drawn:
+
+* Boost R-tree does the fastest queries over box keys, but Nanoflann adapted for boxes isn't far behind
+* For point keys Nanoflann has an outstanding advantage
+* As GEOS is used by PostGIS, one cannot help wondering, could spatial indexing performance in PostgreSQL databases improve if GEOS switched to a more performant spatial index?
+Even if Boost is a too heavy dependency to add to GEOS, Nanoflann is much lighter and still significantly better than GEOS's own indices.
