@@ -1,4 +1,4 @@
-# GeoToolbox
+﻿# GeoToolbox
 
 A collection of tools that can help with the development of geometry applications in C++
 
