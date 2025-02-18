@@ -1,11 +1,19 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
 
-#ifdef ENABLE_NANOFLANN
+#ifndef ENABLE_NANOFLANN
+
+template <typename TSpatialKey>
+struct NanoflannStaticKdtree
+{
+	using IndexType = void;
+};
+
+#else
 
 #pragma GCC system_header
 
@@ -28,6 +36,9 @@ struct NanoflannStaticKdtreeBase
 	static constexpr std::string_view Name = "nanoflann " MAKE_STRING(NANOFLANN_VERSION) " Static";
 
 	static constexpr auto IsDynamic = false;
+
+	// Parallel build does run faster, but only in rare cases
+	static constexpr auto MaxThreadCount = 1; // 8;
 };
 
 template <typename TVector>
@@ -100,9 +111,8 @@ struct NanoflannStaticKdtree : NanoflannStaticKdtreeBase
 		auto data = std::make_unique<Data>();
 		data->dataset = &dataset;
 		auto const dataPtr = data.get();
-		// Parallel build does run faster, but only in rare cases
-		//auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(16, nanoflann::KDTreeSingleIndexAdaptorFlags::None, 8);
-		return { std::move(data), std::make_unique<TreeType>(int(Dimensions), *dataPtr/*, params*/) };
+		auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(GeoToolbox::MaxElementsPerNode, nanoflann::KDTreeSingleIndexAdaptorFlags::None, MaxThreadCount);
+		return { std::move(data), std::make_unique<TreeType>(int(Dimensions), *dataPtr, params) };
 	}
 
 	static int QueryBox(IndexType const& index, BoxType const& queryBox)
@@ -120,6 +130,7 @@ struct NanoflannStaticKdtree : NanoflannStaticKdtreeBase
 			{
 				for (auto i = node->node_type.lr.left; i < node->node_type.lr.right; ++i)
 				{
+					GeoToolbox::AddQueryStats_ObjectOverlapsCount();
 					if (GeoToolbox::Overlap<Point>(queryBox, dataset.GetData()[i].spatialKey))
 					{
 						++resultCount;
@@ -193,7 +204,7 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBa
 		}
 
 		template <class BBOX>
-		bool kdtree_get_bbox(BBOX&) const
+		static bool kdtree_get_bbox(BBOX&)
 		{
 			return false;
 		}
@@ -207,9 +218,8 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBa
 		auto data = std::make_unique<Data>();
 		data->dataset = &dataset;
 		auto const dataPtr = data.get();
-		// Parallel build does run faster, but only in rare cases
-		//auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(16, nanoflann::KDTreeSingleIndexAdaptorFlags::None, 8);
-		return { std::move(data), std::make_unique<TreeType>(int(Dimensions), *dataPtr/*, params*/) };
+		auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(GeoToolbox::MaxElementsPerNode, nanoflann::KDTreeSingleIndexAdaptorFlags::None, MaxThreadCount);
+		return { std::move(data), std::make_unique<TreeType>(int(Dimensions), *dataPtr, params) };
 	}
 
 	static int QueryBox(IndexType const& index, BoxType const& queryBox)
@@ -227,6 +237,7 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBa
 			{
 				for (auto i = node->node_type.lr.left; i < node->node_type.lr.right; ++i)
 				{
+					GeoToolbox::AddQueryStats_ObjectOverlapsCount();
 					if (GeoToolbox::Overlap<TVector>(queryBox, dataset.GetData()[i].spatialKey))
 					{
 						++resultCount;
@@ -239,13 +250,13 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBa
 			auto const dimensionIndex = node->node_type.sub.divfeat;
 			typename TreeType::Node* nextNode = nullptr;
 			if (node->child1 != nullptr
-				&& (dimensionIndex < Dimensions || queryBox.Min()[dimensionIndex - Dimensions] <= node->node_type.sub.divhigh))
+				&& (GeoToolbox::AddQueryStats_ScalarComparisonsCount(), dimensionIndex < Dimensions || queryBox.Min()[dimensionIndex - Dimensions] <= node->node_type.sub.divhigh))
 			{
 				nextNode = node->child1;
 			}
 
 			if (node->child2 != nullptr
-				&& (dimensionIndex >= Dimensions || queryBox.Max()[dimensionIndex] >= node->node_type.sub.divlow))
+				&& (GeoToolbox::AddQueryStats_ScalarComparisonsCount(), dimensionIndex >= Dimensions || queryBox.Max()[dimensionIndex] >= node->node_type.sub.divlow))
 			{
 				if (nextNode != nullptr)
 				{

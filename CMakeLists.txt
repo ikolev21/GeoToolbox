@@ -1,4 +1,4 @@
-# Copyright 2024 Ivan Kolev
+# Copyright 2024-2025 Ivan Kolev
 #
 # Distributed under the Boost Software License, Version 1.0.
 # (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -17,6 +17,19 @@ if( MSVC )
 	set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /JMC" )
 endif()
 
+# message( STATUS "CMAKE_GENERATOR: " ${CMAKE_GENERATOR} )
+# message( STATUS "CMAKE_GENERATOR_TOOLSET: " ${CMAKE_GENERATOR_TOOLSET} )
+# message( STATUS "CMAKE_GENERATOR_PLATFORM: " ${CMAKE_GENERATOR_PLATFORM} )
+# message( STATUS "CMAKE_CXX_COMPILER: " ${CMAKE_CXX_COMPILER} )
+# message( STATUS "CMAKE_CXX_COMPILER_ID: " ${CMAKE_CXX_COMPILER_ID} )
+# message( STATUS "CMAKE_CXX_COMPILER_VERSION: " ${CMAKE_CXX_COMPILER_VERSION} )
+# message( STATUS "CMAKE_CXX_COMPILER_VERSION_INTERNAL: " ${CMAKE_CXX_COMPILER_VERSION_INTERNAL} )
+# message( STATUS "CMAKE_CXX_COMPILER_ARCHITECTURE_ID: " ${CMAKE_CXX_COMPILER_ARCHITECTURE_ID} )
+# message( STATUS "CMAKE_SYSTEM_NAME: " ${CMAKE_SYSTEM_NAME} )
+# message( STATUS "CMAKE_SYSTEM_PROCESSOR: " ${CMAKE_SYSTEM_PROCESSOR} )
+# message( DEBUG "CMAKE_SIZEOF_VOID_P: " ${CMAKE_SIZEOF_VOID_P} )
+# message( VERBOSE "CMAKE_EXE_LINKER_FLAGS: " ${CMAKE_EXE_LINKER_FLAGS} )
+
 set_property( GLOBAL PROPERTY USE_FOLDERS ON )
 
 option( BUILD_TESTS "Build tests" OFF )
@@ -31,6 +44,11 @@ if( BUILD_TESTS_PERFORMANCE )
 	set( ENABLE_SHAPEFILE ON CACHE INTERNAL "" )
 endif()
 
+if( MSVC )
+	#add_compile_options( /arch:AVX2 )
+else()
+	add_compile_options( -msse4.2 )
+endif()
 
 add_library( ExtraWarnings INTERFACE IMPORTED GLOBAL )
 
@@ -39,8 +57,13 @@ if( CMAKE_COMPILER_IS_GNUCXX )
 	target_compile_options( ExtraWarnings INTERFACE -Werror -Wall -Wno-unknown-pragmas -Wno-parentheses -Wno-sign-compare )
 elseif( CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
 	# No -Weverything
-	target_compile_options( ExtraWarnings INTERFACE -Werror -Wall -Wextra -Wshadow -Wdouble-promotion
-	-Wno-unknown-pragmas -Wno-sign-conversion -Wno-sign-compare -Wno-logical-op-parentheses )
+	if( NOT WIN32 )
+		target_compile_options( ExtraWarnings INTERFACE -Werror -Wall -Wextra -Wshadow -Wdouble-promotion -Wno-unknown-pragmas -Wno-sign-conversion -Wno-sign-compare -Wno-logical-op-parentheses )
+	else()
+		target_compile_options( ExtraWarnings INTERFACE -Werror -Wshadow -Wdouble-promotion -Wno-unknown-pragmas -Wno-sign-conversion -Wno-sign-compare -Wno-logical-op-parentheses -Wno-deprecated-declarations -Wno-unknown-argument )
+	endif()
+elseif( CMAKE_CXX_COMPILER_ID MATCHES "Intel" )
+	target_compile_options( ExtraWarnings INTERFACE /W4 /WX -Wno-logical-op-parentheses )
 elseif( MSVC )
 	# No /Wall
 	# 4068: unknown pragma
@@ -89,6 +112,8 @@ if ( ENABLE_SHAPEFILE )
 		${FETCHCONTENT_BASE_DIR}/shapelib-${ShapelibVersion}/shapefil.h
 		${FETCHCONTENT_BASE_DIR}/shapelib-${ShapelibVersion}/shpopen.c
 		${FETCHCONTENT_BASE_DIR}/shapelib-${ShapelibVersion}/safileio.c )
+	target_compile_definitions( GeoToolbox.Shapefile PRIVATE DISABLE_CVSID )
+	target_link_libraries( GeoToolbox.Shapefile PRIVATE MsvcNoDeprecation )
 endif()
 
 # Eigen
@@ -114,6 +139,7 @@ add_library( GeoToolbox
 	${HeadersDir}/DescribeStruct.hpp
 	${HeadersDir}/GeometryTools.hpp
 	${HeadersDir}/Image.hpp src/Image.cpp
+	${HeadersDir}/Iterators.hpp
 	${HeadersDir}/Profiling.hpp
 	${HeadersDir}/Span.hpp
 	${HeadersDir}/SpatialTools.hpp

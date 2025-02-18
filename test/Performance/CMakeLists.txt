@@ -1,4 +1,4 @@
-# Copyright 2024 Ivan Kolev
+# Copyright 2024-2025 Ivan Kolev
 #
 # Distributed under the Boost Software License, Version 1.0.
 # (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -6,7 +6,7 @@
 add_executable( GeoToolbox.PerfTest
 	Boost.hpp
 	Geos.hpp
-	NanoflannAdaptor.hpp
+	NanoflannAdapter.hpp
 	SpatialIndexStd.cpp
 	SpatialIndexTest.cpp
 	SpatialIndexWrapper.hpp
@@ -14,7 +14,7 @@ add_executable( GeoToolbox.PerfTest
 	TestTools.cpp TestTools.hpp
 )
 
-target_link_libraries( GeoToolbox.PerfTest PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance GeoToolbox Catch2::Catch2 GeoToolbox.LodePNG GeoToolbox.Shapefile ) # Eigen3
+target_link_libraries( GeoToolbox.PerfTest PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance GeoToolbox Catch2::Catch2 GeoToolbox.LodePNG ) # Eigen3
 target_include_directories( GeoToolbox.PerfTest PRIVATE ${INCLUDE_DIR} ${FETCHCONTENT_BASE_DIR} )
 target_compile_definitions( GeoToolbox.PerfTest PRIVATE
 	CMAKE_BINARY_DIR=\"${CMAKE_BINARY_DIR}\"

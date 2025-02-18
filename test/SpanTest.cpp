@@ -1,4 +1,4 @@
-﻿// Copyright 2024 Ivan Kolev
+﻿// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -353,11 +353,11 @@ TEST_CASE("Span")
 
 		{
 #ifdef CONFIRM_COMPILATION_ERRORS
-			auto get_temp_vector = []() -> const std::vector<int>
-				{
+			auto get_temp_vector = []() -> std::vector<int> const
+			{
 					return{};
 				};
-			auto use_span = [](Span<const char>)
+			auto use_span = [](Span<char const>)
 				{
 				};
 			use_span(get_temp_vector());
@@ -410,7 +410,7 @@ TEST_CASE("Span")
 
 		{
 			Span<int> s;
-			[[maybe_unused]] Span<const unsigned int> s2 = s;
+			[[maybe_unused]] Span<unsigned int const> s2 = s;
 		}
 
 		{

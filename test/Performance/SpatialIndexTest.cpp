@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -6,13 +6,14 @@
 #include "TestTools.hpp"
 #include "GeoToolbox/GeometryTools.hpp"
 #include "GeoToolbox/Image.hpp"
+#include "GeoToolbox/Iterators.hpp"
 #include "GeoToolbox/Profiling.hpp"
 #include "GeoToolbox/ShapeFile.hpp"
 #include "GeoToolbox/StlExtensions.hpp"
 
 #include "Boost.hpp"
 #include "Geos.hpp"
-#include "NanoflannAdaptor.hpp"
+#include "NanoflannAdapter.hpp"
 #include "SpatialIndexWrapper.hpp"
 #include "Spatialpp.hpp"
 
@@ -51,110 +52,173 @@ namespace
 
 
 	string const DatasetName_Uniform = "Synthetic_Uniform";
+	string const DatasetName_Skewed = "Synthetic_Skewed";
+	string const DatasetName_Aspect = "Synthetic_Aspect";
+	string const DatasetName_Islands = "Synthetic_Islands";
 
 	template <typename TSpatialKey>
-	Dataset<TSpatialKey> MakeUniformDataSet(int datasetSize, double extent = 0, [[maybe_unused]] double maxSize = 0, int randomSeed = 0)
+	struct DatasetMaker
 	{
 		static_assert(SpatialKeyTraits<TSpatialKey>::Dimensions == 2);
 
-		static constexpr auto RandomSeed = 13;
+		static constexpr auto DefaultRandomSeed = 13;
 
-		ASSERT(datasetSize > 0);
-		extent = max(extent, 1.0);
-		maxSize = max(maxSize, 0.001);
 		using VectorType = typename SpatialKeyTraits<TSpatialKey>::VectorType;
-		auto const boundingBox = Box<VectorType>{ { 0, 0 }, { extent, extent } };
-		Catch::SimplePcg32 randomGenerator(randomSeed > 0 ? randomSeed : RandomSeed);
-		uniform_real_distribution distributionPosition(0.0, extent);
-		[[maybe_unused]] uniform_real_distribution distributionSize(0.0, maxSize);
-		vector<Feature<TSpatialKey>> data{ size_t(datasetSize) };
-		for (auto i = 0; i < datasetSize; ++i)
+		using ScalarType = typename SpatialKeyTraits<TSpatialKey>::ScalarType;
+
+
+		double extent;
+		double maxBoxHeight;
+		Box<VectorType> boundingBox;
+		Catch::SimplePcg32 randomGenerator;
+		uniform_real_distribution<ScalarType> distributionHeight;
+
+
+		DatasetMaker(ScalarType extent = 0, ScalarType maxBoxHeight = 0, int randomSeed = 0)
+			: extent{ std::max(extent, 1.0) }
+			, maxBoxHeight{ std::max(maxBoxHeight, 0.000001) }
+			, boundingBox{ { 0, 0 }, { extent, extent } }
+			, randomGenerator(randomSeed > 0 ? randomSeed : DefaultRandomSeed)
+			, distributionHeight{ 0.0, maxBoxHeight }
 		{
-			auto const center = VectorType{ distributionPosition(randomGenerator), distributionPosition(randomGenerator) };
-			if constexpr (SpatialKeyIsPoint<TSpatialKey>)
-			{
-				data[i] = { i, center };
-				// To get the same positions for points and boxes
-				(void)distributionSize(randomGenerator);
-			}
-			else
-			{
-				static_assert(SpatialKeyIsBox<TSpatialKey>, "Not implemented for this type");
-				auto const halfSize = distributionSize(randomGenerator) / 2;
-				auto const v = VectorType{ halfSize, halfSize };
-				auto const box = Box<VectorType>{ center - v, center + v };
-				data[i] = { i, Intersect(box, boundingBox) };
-			}
 		}
 
-		return Dataset{ DatasetName_Uniform, data };
-	}
+		[[nodiscard]] Dataset<TSpatialKey> Make(std::string name, int datasetSize, ScalarType skewPower = 0, ScalarType averageBoxAspect = 1)
+		{
+			ASSERT(datasetSize > 0);
+			ASSERT(averageBoxAspect >= 1);
+
+			uniform_real_distribution distributionPosition{ 0.0, 1.0 };
+			uniform_real_distribution distributionAspect{ averageBoxAspect / 2, averageBoxAspect * 2 };
+
+			vector<Feature<TSpatialKey>> data{ size_t(datasetSize) };
+			for (auto i = 0; i < datasetSize; ++i)
+			{
+				auto y = distributionPosition(randomGenerator);
+				if (skewPower > 1)
+				{
+					y = pow(y, skewPower);
+				}
+
+				auto const center = extent * VectorType{ distributionPosition(randomGenerator), y };
+				if constexpr (SpatialKeyIsPoint<TSpatialKey>)
+				{
+					data[i] = { i, center };
+				}
+				else
+				{
+					data[i] = { i, MakeBox(center, distributionAspect) };
+				}
+			}
+
+			return Dataset{ std::move(name), data };
+		}
+
+		[[nodiscard]] Dataset<TSpatialKey> MakeIslands(int datasetSize, ScalarType islandRadiusFactor = 0)
+		{
+			ASSERT(datasetSize > 0);
+			islandRadiusFactor = islandRadiusFactor > 0 ? min(0.1, islandRadiusFactor) : 0.01;
+			auto const islandRadius = extent * islandRadiusFactor;
+
+			uniform_int_distribution distributionIslandIndex{ 0, 2 };
+			array positions = { -islandRadius, -islandRadius / 2, 0.0, islandRadius / 2, islandRadius };
+			array weights = { 0.0, 0.1, 1.0, 0.1, 0.0 };
+			piecewise_linear_distribution<> distributionOffset{ positions.begin(), positions.end(), weights.begin() };
+			uniform_real_distribution distributionAspect{ 0.5, 2.0 };
+
+			vector<Feature<TSpatialKey>> data{ size_t(datasetSize) };
+			array islandCenters = { islandRadius, extent / 2, extent - islandRadius };
+			for (auto i = 0; i < datasetSize; ++i)
+			{
+				auto const island = distributionIslandIndex(randomGenerator);
+				auto const islandCenter = islandCenters[island];
+				auto const center = VectorType{ std::clamp(islandCenter + distributionOffset(randomGenerator), 0.0, extent), std::clamp(islandCenter + distributionOffset(randomGenerator), 0.0, extent) };
+				if constexpr (SpatialKeyIsPoint<TSpatialKey>)
+				{
+					data[i] = { i, center };
+				}
+				else
+				{
+					data[i] = { i, MakeBox(center, distributionAspect) };
+				}
+			}
+
+			return Dataset{ DatasetName_Islands, data };
+		}
+
+		[[nodiscard]] Box<VectorType> MakeBox(VectorType const& center, uniform_real_distribution<ScalarType>& distributionAspect)
+		{
+			static_assert(SpatialKeyIsBox<TSpatialKey>, "Not implemented for this type");
+			auto const halfHeight = distributionHeight(randomGenerator) / 2;
+			auto const halfWidth = halfHeight * distributionAspect(randomGenerator);
+			auto const v = VectorType{ halfWidth, halfHeight };
+			return Intersect(Box<VectorType>{ center - v, center + v }, boundingBox);
+		}
+	};
 }
 
 
 template <typename TSpatialKey>
-struct DatasetIterator
+struct DatasetFileIterator
 {
 	using iterator_category = std::forward_iterator_tag;
 	using value_type = Dataset<TSpatialKey>;
-	using pointer = Dataset<TSpatialKey> const*;
-	using reference = Dataset<TSpatialKey> const&;
+	using pointer = Dataset<TSpatialKey>*;
+	using reference = Dataset<TSpatialKey>&;
 	using difference_type = std::ptrdiff_t;
-	using const_iterator = DatasetIterator;
-	using iterator = DatasetIterator;
+	using const_iterator = DatasetFileIterator;
+	using iterator = DatasetFileIterator;
 
-	DatasetIterator() = default;
+private:
 
-	explicit DatasetIterator(std::filesystem::path directoryPath)
-		: sizeRange_{ GetDatasetSizeRange() }
-		, directoryPath_{ std::move(directoryPath) }
+	std::filesystem::path directoryPath_;
+	bool singleFile_ = true;
+	bool directoryFinished_ = false;
+	std::filesystem::directory_iterator directoryIterator_;
+	shared_ptr<Dataset<TSpatialKey>> currentSet_;
+
+public:
+
+	DatasetFileIterator() = default;
+
+	explicit DatasetFileIterator(std::filesystem::path directoryPath)
+		: directoryPath_{ std::move(directoryPath) }
 		, singleFile_{ is_regular_file(directoryPath_) }
 		, directoryIterator_{ singleFile_ || !is_directory(directoryPath_) ? filesystem::directory_iterator{} : filesystem::directory_iterator{ directoryPath_ } }
 	{
 		directoryFinished_ = directoryIterator_ == filesystem::directory_iterator{};
 
-		// TODO: more synthetic datasets
-
-		if (IsSelected("Dataset", DatasetName_Uniform, 0))
-		{
-			currentSet_ = make_shared<Dataset<TSpatialKey>>(MakeUniformDataSet<TSpatialKey>(GetDatasetSizeFromOrder(sizeRange_.second - 1), 10, 0.1));
-			datasetSizeOrder_ = sizeRange_.first;
-			currentSet_->SetSize(GetDatasetSizeFromOrder(datasetSizeOrder_));
-		}
-		else
-		{
-			LoadNextFile();
-		}
+		LoadNextFile();
 	}
 
-	DatasetIterator& operator++()
+	DatasetFileIterator& operator++()
 	{
 		MoveToNextValid();
 		return *this;
 	}
 
-	[[nodiscard]] Dataset<TSpatialKey> const& operator*() const
+	[[nodiscard]] Dataset<TSpatialKey>& operator*() const
 	{
 		ASSERT(currentSet_ != nullptr);
 		return *currentSet_;
 	}
 
-	[[nodiscard]] bool operator==(DatasetIterator const& other) const
+	[[nodiscard]] bool operator==(DatasetFileIterator const& other) const
 	{
 		return currentSet_ == other.currentSet_;
 	}
 
-	[[nodiscard]] bool operator!=(DatasetIterator const& other) const
+	[[nodiscard]] bool operator!=(DatasetFileIterator const& other) const
 	{
 		return !(*this == other);
 	}
 
-	[[nodiscard]] DatasetIterator begin() const
+	[[nodiscard]] DatasetFileIterator begin() const
 	{
 		return *this;
 	}
 
-	[[nodiscard]] DatasetIterator end() const
+	[[nodiscard]] DatasetFileIterator end() const
 	{
 		return {};
 	}
@@ -168,17 +232,6 @@ private:
 		if (currentSet_ == nullptr)
 		{
 			return;
-		}
-
-		++datasetSizeOrder_;
-		if (datasetSizeOrder_ < sizeRange_.second)
-		{
-			auto const size = GetDatasetSizeFromOrder(datasetSizeOrder_);
-			if (size <= currentSet_->GetAvailableSize())
-			{
-				currentSet_->SetSize(size);
-				return;
-			}
 		}
 
 		LoadNextFile();
@@ -231,32 +284,90 @@ private:
 		ShapeFile const shapeFile{ path.string() };
 		if (!shapeFile.Supports<TSpatialKey>())
 		{
-			cout << "Skipping " << path.filename().string() << ", data doesn't match spatial key " << SpatialKeyTraits<TSpatialKey>::GetName() << '\n';
+			cout << "Skipped " << path.filename().string() << ", data doesn't match spatial key " << SpatialKeyTraits<TSpatialKey>::GetName() << '\n';
 			return;
 		}
 
-		datasetSizeOrder_ = sizeRange_.first;
-		auto const size = GetDatasetSizeFromOrder(datasetSizeOrder_);
-		if (shapeFile.GetObjectCount() < size)
+		auto const sizeRange = GetDatasetSizeRange();
+		if (auto const minSize = GetDatasetSizeFromOrder(sizeRange.first); shapeFile.GetObjectCount() < minSize)
 		{
-			cout << "Skipping " << path.filename().string() << " (" << shapeFile.GetObjectCount() << " < " << size << ")\n";
+			cout << "Skipped " << path.filename().string() << " (" << shapeFile.GetObjectCount() << " < " << minSize << ")\n";
 			return;
 		}
 
-		auto const maxSize = GetDatasetSizeFromOrder(sizeRange_.second - 1);
+		auto const maxSize = GetDatasetSizeFromOrder(sizeRange.second - 1);
 		auto data = shapeFile.GetKeys<TSpatialKey>(maxSize);
 		currentSet_ = make_shared<Dataset<TSpatialKey>>(path.filename().string(), std::move(data));
-		currentSet_->SetSize(size);
 	}
+};
 
 
-	pair<int, int> sizeRange_;
-	std::filesystem::path directoryPath_;
-	bool singleFile_ = true;
-	bool directoryFinished_ = false;
-	std::filesystem::directory_iterator directoryIterator_;
-	int datasetSizeOrder_ = 0;
-	shared_ptr<Dataset<TSpatialKey>> currentSet_;
+static constexpr auto DatasetKey = "Dataset";
+
+
+template <typename TSpatialKey>
+struct SyntheticDatasetGenerator : Generators::State<Dataset<TSpatialKey>>
+{
+	int maxSize = 0;
+
+
+	int Run()
+	{
+		using namespace Generators;
+
+		for(;; this->Next())
+		{
+			switch (this->CurrentStage())
+			{
+			case Stage_Start:
+				maxSize = GetDatasetSizeFromOrder(GetDatasetSizeRange().second - 1);
+				if (IsSelected(DatasetKey, DatasetName_Uniform, 0))
+				{
+					DatasetMaker<TSpatialKey> maker{ 10, 0.01 };
+					return this->Next(maker.Make(DatasetName_Uniform, maxSize));
+				}
+
+				break;
+
+			case 1:
+				if (IsSelected(DatasetKey, DatasetName_Skewed, 0))
+				{
+					DatasetMaker<TSpatialKey> maker{ 10, 0.001 };
+					return this->Next(maker.Make(DatasetName_Skewed, maxSize, 4));
+				}
+
+				break;
+
+			case 2:
+				if (IsSelected(DatasetKey, DatasetName_Islands, 0))
+				{
+					DatasetMaker<TSpatialKey> maker{ 1000, 0.01 };
+					return this->Next(maker.MakeIslands(maxSize, 0.01));
+				}
+
+				break;
+
+			case 3:
+				if constexpr (SpatialKeyIsBox<TSpatialKey>)
+				{
+					if (IsSelected(DatasetKey, DatasetName_Aspect, 0))
+					{
+						DatasetMaker<TSpatialKey> maker{ 10, 0.0005 };
+						return this->Next(maker.Make(DatasetName_Aspect, maxSize, 0, 100));
+					}
+
+					break;
+				}
+
+				[[fallthrough]];
+
+				// TODO: more synthetic datasets
+
+			default:
+				return this->Finish();
+			}
+		}
+	}
 };
 
 
@@ -269,12 +380,14 @@ struct IsSpatialIndex
 template <typename TSpatialKey>
 using IndicesToTest = MakeFilteredTypeList<IsSpatialIndex,
 	StdVector<TSpatialKey>,
-	StdHashset<TSpatialKey>,
+	//StdHashset<TSpatialKey>,
+	//EmhashSet8<TSpatialKey>,
 	BoostRtree<TSpatialKey>,
 	GeosTemplateStrTree<TSpatialKey>,
 	GeosQuadTree<TSpatialKey>,
 	NanoflannStaticKdtree<TSpatialKey>,
-	SpatialppKdtree<TSpatialKey>>;
+	SpatialppKdtree<TSpatialKey>
+>;
 
 
 struct ResultVerifier
@@ -324,24 +437,39 @@ struct ResultVerifier
 };
 
 template <typename TSpatialKey>
+std::string GetFilename(Dataset<TSpatialKey> const& dataset)
+{
+	return dataset.GetName() + "-" + string(SpatialKeyTraits<TSpatialKey>::GetName()) + char('0' + SpatialKeyTraits<TSpatialKey>::Dimensions) + "-" + to_string(dataset.GetSize());
+}
+
+template <typename TSpatialKey>
 void SaveImage(Dataset<TSpatialKey> const& dataset)
 {
+	auto const filename = GetFilename<TSpatialKey>(dataset);
+	auto const filepath = GetOutputPath() / filesystem::path{ filename + ".png" };
+	if (exists(filepath))
+	{
+		return;
+	}
+
 	static constexpr auto ImageSize = 1024;
 	auto datasetImage = Image(ImageSize, ImageSize);
 	Draw(datasetImage, dataset);
-	auto const filename = dataset.GetName() + "-" + string(SpatialKeyTraits<TSpatialKey>::GetName()) + char('0' + SpatialKeyTraits<TSpatialKey>::Dimensions) + "-" + to_string(dataset.GetSize());
-	auto const filepath = GetOutputPath() / filesystem::path{ filename + ".png" };
-	if (!exists(filepath))
-	{
-		datasetImage.Encode(filepath.string());
-	}
+	datasetImage.Encode(filepath.string());
+}
+
+template <typename TSpatialKey>
+void SaveShapefile(Dataset<TSpatialKey> const& dataset)
+{
+	auto const filename = GetFilename<TSpatialKey>(dataset);
+	ShapeFile::Write(GetOutputPath() / filesystem::path{ filename + ".shp" }, dataset.GetKeys());
 }
 
 struct TestContextBase
 {
 	Timings timings{ 2 * Timings::UsPerSecond };
 
-	PerfRecord perfRecord{ GetCatchTestName() };
+	PerfRecord perfRecord{ GetCatchTestName(), GetConfig().GetValue("RunId", "") };
 
 	shared_ptr<atomic<int64_t>> allocatorStats = make_shared<atomic<int64_t>>();
 
@@ -349,6 +477,122 @@ struct TestContextBase
 
 	bool const resetResults = GetConfig().GetValue("Reset", 0) == 1;
 };
+
+
+static constexpr auto QueriesPerAxis = 66;
+
+template <class TVector>
+class QueryIterator
+{
+	using ScalarType = typename VectorTraits<TVector>::ScalarType;
+	static constexpr auto Dimensions = int(VectorTraits<TVector>::Dimensions);
+	static constexpr auto Epsilon = 1e-8;
+
+
+	std::array<int, Dimensions> index_{ -1 };
+
+	int samplesPerAxis_ = 10;
+
+	Box<TVector> datasetBounds_;
+
+	TVector datasetSizes_;
+
+	ScalarType size_;
+
+	Box<TVector> box_;
+
+public:
+
+	using value_type = Box<TVector>;
+	using pointer = value_type const*;
+	using reference = value_type const&;
+	using iterator_category = std::forward_iterator_tag;
+	using difference_type = ptrdiff_t;
+
+	QueryIterator() = default;
+
+	QueryIterator(TVector datasetSample, Box<TVector> const& datasetBounds, int samplesPerAxis, ScalarType size)
+		: samplesPerAxis_{ samplesPerAxis }
+		, datasetBounds_{ datasetBounds }
+		, datasetSizes_{ datasetBounds_.Sizes() }
+		, size_{ size }
+		// Start with a query that coincides with an element of the dataset, to test this scenario, and to guarantee we always find at least one element
+		, box_{ Box<TVector>::FromMinAndSize(datasetSample, size_) }
+	{
+		index_[0] = 0;
+		index_[Dimensions - 1] = -1;
+
+	}
+
+	[[nodiscard]] Iterable<QueryIterator> MakeRange() const
+	{
+		return { *this, QueryIterator{} };
+	}
+
+	[[nodiscard]] QueryIterator SetSize(ScalarType newSize) const
+	{
+		auto result = *this;
+		result.size_ = newSize;
+		return result;
+	}
+
+	reference operator* () const
+	{
+		return box_;
+	}
+
+	pointer operator-> () const noexcept
+	{
+		return &box_;
+	}
+
+	QueryIterator& operator++()
+	{
+		if (index_[0] >= 0)
+		{
+			for (auto dim = Dimensions - 1; dim >= 0; --dim)
+			{
+				++index_[dim];
+				if (index_[dim] < samplesPerAxis_)
+				{
+					for (auto rest = dim + 1; rest < Dimensions; ++rest)
+					{
+						index_[rest] = 0;
+					}
+
+					break;
+				}
+
+				if (dim == 0)
+				{
+					index_ = { -1 };
+					box_ = {};
+					return *this;
+				}
+			}
+		}
+
+		TVector corner{};
+		for (auto dim = 0; dim < Dimensions; ++dim)
+		{
+			corner[dim] = datasetBounds_.Min()[dim] + index_[dim] * datasetSizes_[dim] / (samplesPerAxis_ - 2);
+		}
+
+		box_ = Box<TVector>::FromMinAndSize(corner, size_);
+		return *this;
+	}
+
+	[[nodiscard]] friend bool operator==(QueryIterator const& a, QueryIterator const& b) noexcept
+	{
+		return a.index_[0] < 0 && b.index_[0] < 0 || a.index_ == b.index_;
+	}
+
+	[[nodiscard]] friend bool operator!=(QueryIterator const& a, QueryIterator const& b) noexcept
+	{
+		return !(a == b);
+	}
+};
+
 
 template <typename TSpatialKey>
 struct TestContext : TestContextBase
@@ -361,9 +605,6 @@ struct TestContext : TestContextBase
 
 	Dataset<TSpatialKey> const* dataset;
 
-	vector<BoxType> boxQueriesSmall = GenerateBoxQueries(*dataset, 65536);
-	vector<BoxType> boxQueriesBig = GenerateBoxQueries(*dataset, 64);
-
 
 	explicit TestContext(Dataset<TSpatialKey> const& dataset)
 		: dataset(&dataset)
@@ -371,53 +612,19 @@ struct TestContext : TestContextBase
 		if constexpr (SpatialKeyTraits<TSpatialKey>::VectorTraitsType::Name == VectorTraits<Vector2>::Name)
 		{
 			SaveImage(dataset);
+			if (StartsWith(dataset.GetName(), "Synthetic"))
+			{
+				SaveShapefile(dataset);
+			}
 		}
 
 		cout << dataset.GetName() << '\t' << dataset.GetSize() << '\n';
 	}
 
-	static vector<BoxType> GenerateBoxQueries(Dataset<TSpatialKey> const& dataset, double factor)
+	double StoreResults(string_view testName, string_view spatialIndexName, bool allSupported)
 	{
-		static constexpr auto QueriesCount = 8;
+		pair<int64_t, int64_t> change{};
 
-		auto const& extent = dataset.GetBoundingBox();
-		auto const sizes = extent.Sizes();
-		auto const windowSize = Flat<VectorType>(MinimumValue(sizes) / factor);
-		vector<BoxType> queries;
-
-		// To guarantee we find at least one element, put the last element in the dataset in the query list
-		if constexpr (SpatialKeyIsPoint<TSpatialKey>)
-		{
-			auto const corner = dataset.GetData().back().spatialKey;
-			queries.emplace_back(corner, corner + windowSize);
-		}
-		else
-		{
-			static_assert(SpatialKeyIsBox<TSpatialKey>);
-			queries.emplace_back(dataset.GetData().back().spatialKey);
-		}
-
-		for (auto i = 0; i < QueriesCount; ++i)
-		{
-			VectorType pointOnDiagonal{};
-			auto const center = extent.Center();
-			for (auto dim = 0; dim < int(Dimensions); ++dim)
-			{
-				auto corner = center;
-				corner[dim] = extent.Min()[dim] + (i + 0.5) * extent.Size(dim) / QueriesCount;
-				pointOnDiagonal[dim] = corner[dim];
-				queries.emplace_back(corner, corner + windowSize);
-			}
-
-			queries.emplace_back(pointOnDiagonal, pointOnDiagonal + windowSize);
-		}
-
-		return queries;
-	}
-
-
-	void StoreResults(string_view testName, string_view spatialIndexName, bool allSupported)
-	{
 		for (auto const& action : timings.GetAllActions())
 		{
 			auto entry = perfRecord.MakeEntry(*dataset, spatialIndexName, testName, action.first);
@@ -436,7 +643,8 @@ struct TestContext : TestContextBase
 					entry,
 					int64_t(action.second.bestTime),
 					action.second.memoryDelta,
-					action.second.failed
+					action.second.failed,
+					&change
 				);
 			}
 		}
@@ -459,8 +667,12 @@ struct TestContext : TestContextBase
 				);
 			}
 		}
+
+		return change.second > 0 ? change.second * 100.0 / change.first : -1;
 	}
 };
+
+constexpr auto QueryNearestCount = 15;
 
 template <typename TSpatialKey>
 struct Test_Load_Query_Destroy
@@ -473,14 +685,16 @@ struct Test_Load_Query_Destroy
 		static_assert(std::is_move_constructible_v<TIndex>);
 
 		auto allSupported = true;
-		auto queryBoxSmallResult = -1.0;
-		auto queryBoxBigResult = -1.0;
-		auto queryNearestResult3 = -1.0;
-		auto queryNearestResult50 = -1.0;
-		Timings::ActionStats* statsQueryBoxSmall = nullptr;
-		Timings::ActionStats* statsQueryBoxBig = nullptr;
-		Timings::ActionStats* statsQueryNearest3 = nullptr;
-		Timings::ActionStats* statsQueryNearest50 = nullptr;
+
+		auto queryBoxResult = -1.0;
+		Timings::ActionStats* statsQueryBox = nullptr;
+
+		auto queryNearestResult = -1.0;
+		Timings::ActionStats* statsQueryNearest = nullptr;
+
+		auto const& dataset = *test.dataset;
+
+		QueryIterator firstQuery{ GetLowBound(dataset.GetData().back().spatialKey), dataset.GetBoundingBox(), QueriesPerAxis, dataset.GetSmallestExtent() / (QueriesPerAxis - 2) };
 
 		while (test.timings.NextIteration())
 		{
@@ -493,67 +707,59 @@ struct Test_Load_Query_Destroy
 					return TIndex::Load(*test.dataset, test.allocatorStats);
 				});
 
-			if (TIndex::QueryBox(index, test.boxQueriesSmall.front()) < 0)
+			if (TIndex::QueryBox(index, *firstQuery) < 0)
 			{
 				// Box query not supported
-				queryBoxSmallResult = queryBoxBigResult = -1;
+				queryBoxResult = -1;
 				allSupported = false;
 			}
 			else
 			{
-				queryBoxSmallResult = test.timings.Record(
-					"Query Box Small",
-					[&test, &index]
+				queryBoxResult = test.timings.Record(
+					"Query Box",
+					[&firstQuery, &index]
 					{
-						auto total = 0;
-						for (auto const& query : test.boxQueriesSmall)
+						auto totalFound = 0;
+						auto queryCount = 0;
+						//auto emptyCount = 0;
+						TheQueryStats.Clear();
+						for (auto const& query : firstQuery.MakeRange())
 						{
-							total += TIndex::QueryBox(index, query);
+							auto const found = TIndex::QueryBox(index, query);
+							totalFound += found;
+							++queryCount;
+							//if (found == 0)
+							//{
+							//	++emptyCount;
+							//}
 						}
 
-						return total;
-					}, &statsQueryBoxSmall);
-
-				queryBoxBigResult = test.timings.Record(
-					"Query Box Big",
-					[&test, &index]
-					{
-						auto total = 0;
-						for (auto const& query : test.boxQueriesBig)
-						{
-							total += TIndex::QueryBox(index, query);
-						}
-
-						return total;
-					}, &statsQueryBoxSmall);
+						ASSERT(queryCount = QueriesPerAxis * QueriesPerAxis * 2);
+						//ASSERT(emptyCount < 3 * queryCount / 4);
+						return totalFound;
+					}, &statsQueryBox);
 			}
 
-			if (TIndex::QueryNearest(index, test.boxQueriesSmall.front().Min(), 3) < 0)
+			if (TIndex::QueryNearest(index, firstQuery->Min(), 3) < 0)
 			{
 				// Nearest query not supported
-				queryNearestResult3 = queryNearestResult50 = -1;
+				queryNearestResult = -1;
 				allSupported = false;
 			}
 			else
 			{
-				auto runQuery = [&test, &index](int nearestCount, Timings::ActionStats*& statsQueryNearest)
+				queryNearestResult = test.timings.Record(
+					"Query Nearest",
+					[&firstQuery, &index]
 					{
-						return test.timings.Record(
-							"Query Nearest " + to_string(nearestCount),
-							[&test, &index, nearestCount]
-							{
+						auto nearestResult = 0.0;
+						for (auto const& query : firstQuery.MakeRange())
+						{
+							nearestResult += TIndex::QueryNearest(index, query.Min(), QueryNearestCount);
+						}
 
-								auto nearestResult = 0.0;
-								for (auto const& query : test.boxQueriesSmall)
-								{
-									nearestResult += TIndex::QueryNearest(index, query.Min(), nearestCount);
-								}
-
-								return nearestResult;
-							}, &statsQueryNearest);
-					};
-				queryNearestResult3 = runQuery(3, statsQueryNearest3);
-				queryNearestResult50 = runQuery(50, statsQueryNearest50);
+						return nearestResult;
+					}, &statsQueryNearest);
 			}
 
 			test.timings.Record("Destroy", test.allocatorStats, [&index]
@@ -563,11 +769,11 @@ struct Test_Load_Query_Destroy
 				});
 		}
 
+		ASSERT(queryBoxResult > 0);
+
 		auto const failureCount =
-			test.verifier.Check(queryBoxSmallResult, 0, statsQueryBoxSmall)
-			+ test.verifier.Check(queryBoxBigResult, 1, statsQueryBoxBig)
-			+ test.verifier.Check(queryNearestResult3, 2, statsQueryNearest3)
-			+ test.verifier.Check(queryNearestResult50, 3, statsQueryNearest50);
+			test.verifier.Check(queryBoxResult, 0, statsQueryBox)
+			+ test.verifier.Check(queryNearestResult, 1, statsQueryNearest);
 		return { failureCount, allSupported };
 	}
 };
@@ -586,18 +792,20 @@ struct Test_Insert_Erase_Query
 		}
 		else
 		{
-			cout << "\t\t" << "Skipping " << spatialIndex.Name << " (does not support removal)" << '\n';
+			cout << "\t\t" << "Skipped " << spatialIndex.Name << " (does not support removal)" << '\n';
 			return { -1, false };
 		}
 	}
 
 	template <class TIndex>
-	static pair<int, bool> Run_(TestContext<TSpatialKey>& test, TIndex const&)
+	static pair<int, bool> Run_(TestContext<TSpatialKey>& test, TIndex const& spatialIndex)
 	{
-		auto queryBoxSmallResult = -1.0;
-		auto queryBoxBigResult = -1.0;
-		Timings::ActionStats* statsQueryBoxSmall = nullptr;
-		Timings::ActionStats* statsQueryBoxBig = nullptr;
+		auto queryBoxResult = -1.0;
+		Timings::ActionStats* statsQueryBox = nullptr;
+
+		auto const& dataset = *test.dataset;
+
+		QueryIterator firstQuery{ GetLowBound(dataset.GetData().back().spatialKey), dataset.GetBoundingBox(), QueriesPerAxis, dataset.GetSmallestExtent() / (QueriesPerAxis - 2) };
 
 		while (test.timings.NextIteration())
 		{
@@ -607,79 +815,72 @@ struct Test_Insert_Erase_Query
 			test.timings.Record(
 				"Insert",
 				test.allocatorStats,
-				[&test, &index]
+				[&dataset, &index]
 				{
-					for (auto const& feature : test.dataset->GetData())
+					for (auto const& feature : dataset.GetData())
 					{
 						TIndex::Insert(index, &feature);
 					}
 				});
 
-			if (!TIndex::Erase(index, &test.dataset->GetData()[0]))
+			if (!TIndex::Erase(index, &dataset.GetData()[0]))
 			{
-				//cout << '\t' << spatialIndex.Name << '\t' << "skipped, does not support removing items\n";
-				return { 0, false };
+				cout << "\t\t" << spatialIndex.Name << '\t' << "skipped, removing failed\n";
+				return { -1, false };
 			}
 
 			// Remove some elements, both to measure erasing speed and disbalance the index
 			test.timings.Record(
 				"Erase",
 				test.allocatorStats,
-				[&test, &index]
+				[&dataset, &index]
 				{
-					auto const dataSetSize = test.dataset->GetSize();
+					auto const dataSetSize = dataset.GetSize();
 					for (auto i = 0; i < dataSetSize; i += 5)
 					{
-						TIndex::Erase(index, &test.dataset->GetData()[i]);
+						TIndex::Erase(index, &dataset.GetData()[i]);
 					}
 				});
 
 			// Return the erased elements back, both to make query results comparable to the other tests and to disbalance the index even more
-			// Then give indices that support re-balancing a chance to do it
 			test.timings.Record(
 				"Reinsert",
 				test.allocatorStats,
-				[&test, &index]
+				[&dataset, &index]
 				{
-					auto const dataSetSize = test.dataset->GetSize();
+					auto const dataSetSize = dataset.GetSize();
 					for (auto i = 0; i < dataSetSize; i += 5)
 					{
-						TIndex::Insert(index, &test.dataset->GetData()[i]);
+						TIndex::Insert(index, &dataset.GetData()[i]);
 					}
+				});
 
+			// Then give indices that need re-balancing a chance to do it
+			test.timings.Record(
+				"Rebalance",
+				test.allocatorStats,
+				[&index]
+				{
 					TIndex::Rebalance(index);
 				});
 
-			queryBoxSmallResult = test.timings.Record(
-				"Query Box Small",
-				[&test, &index]
+			queryBoxResult = test.timings.Record(
+				"Query Box",
+				[&firstQuery, &index]
 				{
 					auto total = 0;
-					for (auto const& query : test.boxQueriesSmall)
+					for (auto const& query : firstQuery.MakeRange())
 					{
 						total += TIndex::QueryBox(index, query);
 					}
 
 					return total;
-				}, &statsQueryBoxSmall);
-
-			queryBoxBigResult = test.timings.Record(
-				"Query Box Big",
-				[&test, &index]
-				{
-					auto total = 0;
-					for (auto const& query : test.boxQueriesBig)
-					{
-						total += TIndex::QueryBox(index, query);
-					}
-
-					return total;
-				}, &statsQueryBoxBig);
+				}, &statsQueryBox);
 		}
 
-		auto const failureCount =
-			test.verifier.Check(queryBoxSmallResult, 0, statsQueryBoxSmall)
-			+ test.verifier.Check(queryBoxBigResult, 1, statsQueryBoxBig);
+		ASSERT(queryBoxResult > 0);
+
+		auto const failureCount = test.verifier.Check(queryBoxResult, 0, statsQueryBox);
 		return { failureCount, true };
 	}
 };
@@ -706,13 +907,34 @@ int RunTest(TestContext<TSpatialKey>& test)
 			test.verifier.Reset();
 
 			auto const [failures, allSupported] = TestToRun<TSpatialKey>::Run(test, index);
+			auto const changeFactor = test.StoreResults(TestToRun<TSpatialKey>::Name, index.Name, allSupported);
 			if (failures >= 0)
 			{
-				cout << "\t\t" << test.timings.BestIterationTime() << '\t' << index.Name << '\n';
+				cout << "\t\t" << test.timings.BestIterationTime() << '\t' << index.Name;
+				if (changeFactor > 0)
+				{
+					cout << '\t' << std::setprecision(1) << std::fixed;
+					if (changeFactor >= 100)
+					{
+						cout << '+' << changeFactor - 100;
+					}
+					else
+					{
+						cout << '-' << 100 - changeFactor;
+					}
+
+					cout << '%';
+				}
+
+				if (!TheQueryStats.IsEmpty())
+				{
+					cout << "\tComparisons: " << TheQueryStats.ScalarComparisonsCount << " + " << TheQueryStats.BoxOverlapsCount << " + " << TheQueryStats.ObjectOverlapsCount << " = "
+						<< TheQueryStats.ScalarComparisonsCount + TheQueryStats.BoxOverlapsCount + TheQueryStats.ObjectOverlapsCount;
+				}
+
+				cout << '\n';
 				failuresCount += failures;
 			}
-
-			test.StoreResults(TestToRun<TSpatialKey>::Name, index.Name, allSupported);
 		});
 
 	return failuresCount;
@@ -727,11 +949,13 @@ TEST_CASE(SpatialIndexCompareTestName, "[.Performance]")
 		SKIP("Run from a directory under the project root");
 	}
 
+	WarnInDebugBuild();
+
 	create_directory(GetOutputPath());
 
 	if (GetDataDirectory().empty())
 	{
-		cout << '\n' << "'data' directory not found at root, no datasets will be loaded\n";
+		cout << "\n'data' directory not found at root, no datasets will be loaded\n";
 	}
 
 	auto const configFilePath = GetOutputPath() / (string(SpatialIndexCompareTestName) + ".cfg");
@@ -741,6 +965,8 @@ TEST_CASE(SpatialIndexCompareTestName, "[.Performance]")
 	}
 
 	auto totalFailures = 0;
+
+	Stopwatch const timer;
 
 	TypeListForEach<SpatialKeyTypes>([&totalFailures]([[maybe_unused]] auto spatialKey)
 		{
@@ -758,17 +984,34 @@ TEST_CASE(SpatialIndexCompareTestName, "[.Performance]")
 				return;
 			}
 
-			for (auto const& dataset : DatasetIterator<SpatialKeyType>(GetDataDirectory()))
+			auto const sizeRange = GetDatasetSizeRange();
+
+			Generators::Generator<SyntheticDatasetGenerator<SpatialKeyType>> synthetic{};
+			auto files = DatasetFileIterator<SpatialKeyType>(GetDataDirectory());
+			for (auto& dataset : Concat(synthetic, files))
 			{
-				TestContext test{ dataset };
+				for (auto sizeOrder = sizeRange.first; sizeOrder < sizeRange.second; ++sizeOrder)
+				{
+					auto const size = GetDatasetSizeFromOrder(sizeOrder);
+					if (size > dataset.GetAvailableSize())
+					{
+						break;
+					}
 
-				totalFailures += RunTest<SpatialKeyType, Test_Load_Query_Destroy>(test);
+					dataset.SetSize(size);
 
-				totalFailures += RunTest<SpatialKeyType, Test_Insert_Erase_Query>(test);
+					TestContext test{ dataset };
 
-				test.perfRecord.Save();
+					totalFailures += RunTest<SpatialKeyType, Test_Load_Query_Destroy>(test);
+
+					totalFailures += RunTest<SpatialKeyType, Test_Insert_Erase_Query>(test);
+
+					test.perfRecord.Save();
+				}
 			}
 		});
+
+	cout << "\nTotal running time (s): " << ( timer.ElapsedMilliseconds() + 900 ) / 1000 << '\n';
 
 	REQUIRE(totalFailures == 0);
 }

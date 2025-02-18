@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -18,6 +18,7 @@ struct SpatialppKdtree
 #pragma GCC system_header
 
 #include "TestTools.hpp"
+#include "GeoToolbox/Iterators.hpp"
 #include "GeoToolbox/SpatialTools.hpp"
 
 #include <spatial_2.1.8/src/box_multiset.hpp>
@@ -84,7 +85,7 @@ struct SpatialppKdtree
 	{
 		auto result = MakeEmptyIndex(std::move(allocatorStats));
 		auto const data = dataset.GetData();
-		result.insert(GeoToolbox::SelfIterator{ data.begin() }, GeoToolbox::SelfIterator{ data.end() });
+		result.insert(GeoToolbox::ValueIterator{ data.data() }, GeoToolbox::ValueIterator{ data.data() + data.size() });
 		return result;
 	}
 

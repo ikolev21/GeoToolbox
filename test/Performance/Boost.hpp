@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -16,6 +16,7 @@ struct BoostRtree
 #else
 
 #include "TestTools.hpp"
+#include "GeoToolbox/Iterators.hpp"
 #include "GeoToolbox/SpatialTools.hpp"
 
 #pragma GCC system_header
@@ -52,8 +53,6 @@ struct Bgi::indexable<GeoToolbox::Feature<TSpatialKey> const*>
 };
 
 
-static constexpr auto MaxElementsPerNode = 16;
-
 template <typename TSpatialKey>
 struct BoostRtree
 {
@@ -71,7 +70,7 @@ struct BoostRtree
 
 	using IndexType = Bgi::rtree<
 		FeaturePtr,
-		Bgi::rstar<MaxElementsPerNode>,
+		Bgi::rstar<GeoToolbox::MaxElementsPerNode>,
 		Bgi::indexable<FeaturePtr>,
 		Bgi::equal_to<FeaturePtr>,
 		AllocatorType>;
@@ -79,7 +78,7 @@ struct BoostRtree
 	static IndexType MakeEmptyIndex(GeoToolbox::SharedAllocatedSize allocatorStats)
 	{
 		return IndexType{
-			Bgi::rstar<MaxElementsPerNode>{},
+			Bgi::rstar<GeoToolbox::MaxElementsPerNode>{},
 			Bgi::indexable<FeaturePtr>{},
 			Bgi::equal_to<FeaturePtr>{},
 			AllocatorType{ std::move(allocatorStats) } };
@@ -88,7 +87,7 @@ struct BoostRtree
 	static IndexType Load(Dataset<TSpatialKey> const& dataset, GeoToolbox::SharedAllocatedSize allocatorStats)
 	{
 		auto const data = dataset.GetData();
-		return { GeoToolbox::SelfIterator{ data.begin() }, GeoToolbox::SelfIterator{ data.end() }, AllocatorType{ std::move(allocatorStats) } };
+		return { GeoToolbox::ValueIterator{ data.data() }, GeoToolbox::ValueIterator{ data.data() + data.size() }, AllocatorType{ std::move(allocatorStats) } };
 	}
 
 	static void Insert(IndexType& index, FeaturePtr feature)

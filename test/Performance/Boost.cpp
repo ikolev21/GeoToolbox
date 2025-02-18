@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -54,6 +54,8 @@ template struct BoostRtree<Box<EVector2>>;
 
 TEST_CASE("RTreePerformance_Insert_Boost", "[.Performance]")
 {
+	WarnInDebugBuild();
+
 	if constexpr (01)
 	{
 		ShapeFile const properties("../../data/Property_Boundary_View.shp");
@@ -84,6 +86,8 @@ TEST_CASE("RTreePerformance_Insert_Boost", "[.Performance]")
 
 TEST_CASE("RTreePerformance_Boost", "[.Performance]")
 {
+	WarnInDebugBuild();
+
 	auto const points = ShapeFile("../../data/Property_Point_View.shp").GetKeys<Vector2>();
 
 	ShapeFile const properties("../../data/Property_Boundary_View.shp");

@@ -1,4 +1,4 @@
-﻿// Copyright 2024 Ivan Kolev
+﻿// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -51,14 +51,14 @@ namespace GeoToolbox
 		}
 
 		template <std::size_t N>
-		/*explicit( false )*/ constexpr Span(element_type(&array)[N]) noexcept
+		/*explicit(false)*/ constexpr Span(element_type(&array)[N]) noexcept
 			: data_{ std::addressof(array[0]) }
 			, count_{ size_type(N) }
 		{
 		}
 
 		template <std::size_t N, class ArrayElementType = std::remove_const_t<element_type>>
-		/*explicit( false )*/ constexpr Span(std::array<ArrayElementType, N>& array) noexcept
+		/*explicit(false)*/ constexpr Span(std::array<ArrayElementType, N>& array) noexcept
 			: data_{ array.data() }
 			, count_{ size_type(N) }
 		{
@@ -71,7 +71,7 @@ namespace GeoToolbox
 			&& std::is_convertible_v<typename Container::pointer, decltype(std::declval<Container>().data())>
 			&& sizeof(*static_cast<typename Container::pointer>(nullptr)) == sizeof(*static_cast<pointer>(nullptr))
 			>>
-			/*explicit( false )*/ constexpr Span(Container& cont) noexcept
+			/*explicit(false)*/ constexpr Span(Container& cont) noexcept
 			: Span {
 			cont.size() > 0 ? &cont[0] : nullptr, size_type(cont.size())
 		}
@@ -85,7 +85,7 @@ namespace GeoToolbox
 			&& std::is_convertible_v<typename Container::pointer, decltype(std::declval<Container>().data())>
 			&& sizeof(*static_cast<typename Container::pointer>(nullptr)) == sizeof(*static_cast<pointer>(nullptr))
 			>>
-			/*explicit( false )*/ constexpr Span(Container const& cont) noexcept
+			/*explicit(false)*/ constexpr Span(Container const& cont) noexcept
 			: Span {
 			cont.size() > 0 ? &cont[0] : nullptr, size_type(cont.size())
 		}
@@ -190,36 +190,6 @@ namespace GeoToolbox
 			return { data() + offset, count };
 		}
 	};
-
-	template <typename T, typename U>
-	constexpr bool IsEmptyOrSameSizeAs(Span<T> const& span, Span<U> const& target)
-	{
-		return span.empty() || span.size() == target.size();
-	}
-
-	template <typename T>
-	constexpr T* GetElementIfNotEmpty(Span<T> const& span, int index)
-	{
-		return !span.empty() ? span.data() + index : nullptr;
-	}
-
-	template <typename T>
-	constexpr Span<T> MakeSpan(T* begin, T* end)
-	{
-		return Span<T>{begin, end};
-	}
-
-	template <typename T>
-	constexpr Span<T> MakeSpan(T* begin, int count)
-	{
-		return Span<T>{begin, count};
-	}
-
-	template <typename T>
-	constexpr Span<T> MakeSingleElementSpan(T& element)
-	{
-		return Span<T>(&element, &element + 1);
-	}
 
 	//template <typename T, class C>
 	//bool operator==( Span<T> const& a, C const& b )

@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -6,13 +6,15 @@
 #pragma once
 
 #include <algorithm>
-#include <atomic>
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <execution>
 #include <iterator>
 #include <memory>
+#include <memory_resource>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -21,16 +23,42 @@ namespace GeoToolbox
 {
 	// Traits
 
+	struct Identity
+	{
+		template <class T>
+		constexpr T&& operator()(T&& t) const noexcept
+		{
+			return std::forward<T>(t);
+		}
+	};
+
+	// Usage:
+	// using VectorType = std::vector<int>;
+	// static_assert( IsSpecialization<VectorType, std::vector> );
+	// static_assert( !IsSpecialization<int, std::vector> );
+	template <typename TTest, template <typename...> class Ref>
+	inline constexpr auto IsSpecialization = false;
+
+	template <template <typename...> class Ref, typename... Args>
+	inline constexpr auto IsSpecialization<Ref<Args...>, Ref> = true;
+
 	// Usage:
 	// template <typename T> using Has_SomeMethod = decltype( std::declval<T>().SomeMethod( 1, "asd" ) );
 	// static_assert( HasMember<SomeType, Has_SomeMethod>, "SomeType must have SomeMethod( int, char* )" );
 	template <typename T, template <typename> class TMemberTester, class = void>
-	constexpr bool HasMember = false;
+	constexpr auto HasMember = false;
 
 	template <typename T, template <typename> class TMemberTester>
-	constexpr bool HasMember<T, TMemberTester, std::void_t<TMemberTester<T>>> = true;
+	constexpr auto HasMember<T, TMemberTester, std::void_t<TMemberTester<T>>> = true;
+
 
 	// Algorithm wrappers
+
+	template <typename T>
+	T Square(T x)
+	{
+		return x * x;
+	}
 
 	template <class TContainer, typename T>
 	[[nodiscard]] constexpr auto Find(TContainer& container, T const& value)
@@ -82,19 +110,41 @@ namespace GeoToolbox
 		return true;
 	}
 
+	template <class TContainer, class TPredicate>
+	[[nodiscard]] constexpr bool AnyOf(TContainer& container, TPredicate predicate)
+	{
+		for (auto&& element : container)
+		{
+			if (predicate(element))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	// C++20 std::ssize
 	template <class TContainer>
-	[[nodiscard]] std::ptrdiff_t Size(TContainer const& container)
+	[[nodiscard]] std::ptrdiff_t Size(TContainer const& container) noexcept
 	{
 		return static_cast<std::ptrdiff_t>(std::size(container));
 	}
 
-	template<typename TContainer>
+	template <typename TContainer>
 	typename TContainer::value_type Accumulate(TContainer const& container)
 	{
 		using std::begin;
 		using std::end;
 		return std::accumulate(begin(container), end(container), typename TContainer::value_type(0));
+	}
+
+	template <typename TContainer, typename T, class TBinaryOp>
+	auto Accumulate(TContainer const& container, T init, TBinaryOp op)
+	{
+		using std::begin;
+		using std::end;
+		return std::accumulate(begin(container), end(container), init, op);
 	}
 
 	template <typename TContainer, typename TDestContainer, typename TFunctor>
@@ -130,6 +180,15 @@ namespace GeoToolbox
 		using ResultElementType = decltype(functor(*std::declval<TContainer>().begin()));
 		std::vector<ResultElementType> result;
 		Transform(std::forward<TContainer>(container), result, std::move(functor));
+		return result;
+	}
+
+	template <typename TContainer>
+	[[nodiscard]] auto ToVector(TContainer&& container)
+	{
+		using ResultElementType = std::decay_t<decltype(*container.begin())>;
+		std::vector<ResultElementType> result;
+		std::copy(container.begin(), container.end(), std::back_inserter(result));
 		return result;
 	}
 
@@ -240,6 +299,7 @@ namespace GeoToolbox
 		using std::end;
 		return int(std::count_if(std::execution::par, begin(container), end(container), predicate));
 	}
+
 
 	// Type lists
 
@@ -403,6 +463,12 @@ namespace GeoToolbox
 		Detail::TypeListForEachImpl<L>::DoIt(function);
 	}
 
+	template <typename ... T, typename F>
+	constexpr void ForEachType(F function)
+	{
+		(function(T{}), ...);
+	}
+
 
 	template <typename T, typename F>
 	constexpr void TupleForEach(T&& tuple, F function)
@@ -410,305 +476,65 @@ namespace GeoToolbox
 		Detail::TupleForEachImpl(std::forward<T>(tuple), function, std::make_index_sequence<std::tuple_size_v<std::decay_t<T>>>());
 	}
 
-	// Iterators
-
-	template <class F>
-	class OutputIteratorFunction
+	template <typename T, typename F, std::size_t... Indices>
+	constexpr int TupleForIndexImpl(T&& tuple, int index, F&& function, std::index_sequence<Indices...>)
 	{
-		F action_;
-
-	public:
-
-		using iterator_category = std::output_iterator_tag;
-		using value_type = void;
-		using difference_type = void;
-		using pointer = void;
-		using reference = void;
-
-		explicit OutputIteratorFunction(F action)
-			: action_(std::move(action))
-		{
-		}
-
-		template<typename T> OutputIteratorFunction& operator=(T const& value)
-		{
-			action_(value);
-			return *this;
-		}
-
-		OutputIteratorFunction& operator*()
-		{
-			return *this;
-		}
-
-		OutputIteratorFunction& operator++()
-		{
-			return *this;
-		}
-	};
-
-	class CountingOutputIterator
-	{
-		int* count_;
-
-	public:
-		using iterator_category = std::output_iterator_tag;
-		using value_type = void;
-		using difference_type = void;
-		using pointer = void;
-		using reference = void;
-
-		explicit CountingOutputIterator(int& count) noexcept
-			: count_(&count)
-		{
-		}
-
-		template<typename T> CountingOutputIterator& operator=(T const&)
-		{
-			return *this;
-		}
-
-		CountingOutputIterator& operator*() noexcept
-		{
-			return *this;
-		}
-
-		CountingOutputIterator& operator++() noexcept
-		{
-			++*count_;
-			return *this;
-		}
-	};
-
-	// A primitive "range", a pair of iterators with begin()/end()
-	template <class TIterator>
-	class Iterable
-	{
-		TIterator begin_, end_;
-
-	public:
-
-		using value_type = typename std::iterator_traits<TIterator>::value_type;
-		using iterator = TIterator;
-		using const_iterator = TIterator;
-
-		Iterable()
-			: end_(begin_)
-		{
-		}
-
-		Iterable(TIterator begin, TIterator end)
-			: begin_(begin),
-			end_(end)
-		{
-		}
-
-		TIterator begin() const
-		{
-			return begin_;
-		}
-
-		TIterator end() const
-		{
-			return end_;
-		}
-
-		[[nodiscard]] int size() const
-		{
-			return int(std::distance(begin_, end_));
-		}
-	};
-
-	template <class TIterator>
-	Iterable<TIterator> MakeIterable(TIterator begin, int count)
-	{
-		return Iterable<TIterator>(begin, begin + count);
+		return ((Indices == index ? (function(std::get<Indices>(std::forward<T>(tuple))), 1) : 0) + ...);
 	}
 
-	template <class TIterator>
-	Iterable<std::reverse_iterator<TIterator>> ReverseIterable(TIterator begin, TIterator end)
+	template <typename T, typename F>
+	constexpr bool TupleForIndex(T&& tuple, int index, F&& function)
 	{
-		return Iterable<std::reverse_iterator<TIterator>>(std::reverse_iterator<TIterator>(end), std::reverse_iterator<TIterator>(begin));
+		return TupleForIndexImpl(std::forward<T>(tuple), index, std::forward<F>(function), std::make_index_sequence<std::tuple_size_v<std::decay_t<T>>>()) == 1;
 	}
 
-	template <class TContainer>
-	auto ReverseIterable(TContainer&& container)
-	{
-		return ReverseIterable(std::forward<TContainer>(container).begin(), std::forward<TContainer>(container).end());
-	}
-
-	// Useful not just to iterate over an integer range (which is maybe still slower than a plain index loop),
-	// but also to convert a contiguous range of objects into a range of pointers to them
-	template <typename T>
-	struct SelfIterator
-	{
-		using iterator_category = std::random_access_iterator_tag;
-		using value_type = T;
-		using difference_type = std::ptrdiff_t;
-		using pointer = void;
-		using reference = T;
-
-		SelfIterator() = default;
-
-		explicit SelfIterator(value_type value)
-			: value_(value)
-		{
-		}
-
-		void operator++()
-		{
-			++value_;
-		}
-
-		void operator++(int)
-		{
-			++value_;
-		}
-
-		void operator--()
-		{
-			--value_;
-		}
-
-		[[nodiscard]] friend bool operator==(SelfIterator const& a, SelfIterator const& b)
-		{
-			return a.value_ == b.value_;
-		}
-
-		[[nodiscard]] friend bool operator!=(SelfIterator const& a, SelfIterator const& b)
-		{
-			return a.value_ != b.value_;
-		}
-
-		[[nodiscard]] friend difference_type operator-(SelfIterator const& a, SelfIterator const& b)
-		{
-			return a.value_ - b.value_;
-		}
-
-		reference operator*() const
-		{
-			return value_;
-		}
-
-	private:
-		value_type value_{};
-	};
-
-	template <typename T>
-	Iterable<SelfIterator<T>> MakeRange(T first, T last)
-	{
-		return Iterable{ SelfIterator{ first }, SelfIterator{ last } };
-	}
 
 	// Allocations
 
-	using SharedAllocatedSize = std::shared_ptr<std::atomic<std::int64_t>>;
-
-	// Adapted from boost/container/new_allocator.hpp
-	template <typename T, class TAllocator = std::allocator<T>>
-	class ProfileAllocator : public TAllocator
+	template <class TElement, class TPoolResource = std::pmr::synchronized_pool_resource, std::size_t NMaxBlockSize = sizeof(TElement), std::size_t NMaxBlocksPerChunk = 0>
+	class PoolAllocator : public std::pmr::polymorphic_allocator<TElement>
 	{
-		SharedAllocatedSize stats_;
+		using BaseType = std::pmr::polymorphic_allocator<TElement>;
+
+		std::shared_ptr<TPoolResource> resource_;
+
+		template <class T2, class TPoolResource2, std::size_t, std::size_t>
+		friend class PoolAllocator;
 
 	public:
-
-		using value_type = typename TAllocator::value_type;
-		using pointer = typename std::allocator_traits<TAllocator>::pointer;
-		using const_pointer = typename std::allocator_traits<TAllocator>::const_pointer;
-		//using reference = typename TAllocator::reference;
-		//using const_reference = typename TAllocator::const_reference;
-		using size_type = std::size_t;
-		using difference_type = std::ptrdiff_t;
 
 		template <class T2>
 		struct rebind
 		{
-			using TAllocator2 = typename std::allocator_traits<TAllocator>::template rebind_alloc<T2>;
-			using other = ProfileAllocator<T2, TAllocator2>;
+			using other = PoolAllocator<T2, TPoolResource>;
 		};
 
-		~ProfileAllocator() = default;
+		~PoolAllocator() = default;
+		PoolAllocator(PoolAllocator const&) = default;
+		PoolAllocator& operator=(PoolAllocator const&) = delete;
+		PoolAllocator& operator=(PoolAllocator&&) = delete;
 
-		ProfileAllocator() noexcept
-			: stats_(std::make_shared<std::atomic<std::int64_t>>())
+		explicit PoolAllocator(std::size_t maxBlockSize = NMaxBlockSize, std::size_t maxBlocksPerChunk = NMaxBlocksPerChunk)
+			: PoolAllocator{ nullptr, maxBlockSize, maxBlocksPerChunk }
 		{
 		}
 
-		explicit ProfileAllocator(SharedAllocatedSize stats) noexcept
-			: stats_(std::move(stats))
-		{
-			if (stats_ == nullptr)
-			{
-				stats_ = std::make_shared<std::atomic<std::int64_t>>();
-			}
-		}
-
-		ProfileAllocator(ProfileAllocator const& other) noexcept = default;
-
-		ProfileAllocator(ProfileAllocator&& other) noexcept
-			: TAllocator(std::move(other))
-			, stats_(other.stats_)
+		explicit PoolAllocator(std::pmr::memory_resource* upstream, std::size_t maxBlockSize = NMaxBlockSize, std::size_t maxBlocksPerChunk = NMaxBlocksPerChunk)
+			: BaseType{ new TPoolResource(std::pmr::pool_options{ maxBlocksPerChunk, maxBlockSize }, upstream != nullptr ? upstream : std::pmr::get_default_resource()) }
+			, resource_{ static_cast<TPoolResource*>( BaseType::resource() ) }
 		{
 		}
 
-		ProfileAllocator& operator=(ProfileAllocator const& other) noexcept = default;
-
-		ProfileAllocator& operator=(ProfileAllocator&& other) noexcept = delete;
-
-		template <class T2, class TAllocator2>
-		/*explicit( false )*/ ProfileAllocator(ProfileAllocator<T2, TAllocator2> const& other) noexcept
-			: TAllocator(other),
-			stats_(other.state())
+		template <class T2, std::size_t NMaxBlockSizeOther, std::size_t NMaxBlocksPerChunkOther>
+		explicit PoolAllocator( PoolAllocator<T2, TPoolResource, NMaxBlockSizeOther, NMaxBlocksPerChunkOther> const& other )
+			: BaseType{ other.resource() }
+			, resource_{ other.resource_ }
 		{
-		}
-
-		pointer allocate(size_type count)
-		{
-			auto const max_count = std::size_t(-1) / (2 * sizeof(value_type));
-			if (count > max_count)
-			{
-				throw std::bad_alloc();
-			}
-
-			auto const totalSize = count * sizeof(value_type);
-			*stats_ += totalSize;
-			return TAllocator::allocate(count);
-		}
-
-		void deallocate(pointer ptr, size_type count) noexcept
-		{
-			auto const totalSize = count * sizeof(value_type);
-			*stats_ -= std::int64_t(totalSize);
-			TAllocator::deallocate(ptr, count);
-		}
-
-		friend void swap(ProfileAllocator& a, ProfileAllocator& b) noexcept
-		{
-			std::swap(a.stats_, b.stats_);
-		}
-
-		friend bool operator==(ProfileAllocator const& a, ProfileAllocator const& b) noexcept
-		{
-			//return static_cast<TAllocator const&>( a ) == static_cast<TAllocator const&>( b );
-			return a.stats_ == b.stats_;
-		}
-
-		friend bool operator!=(ProfileAllocator const& a, ProfileAllocator const& b) noexcept
-		{
-			return !(a == b);
-		}
-
-
-		[[nodiscard]] SharedAllocatedSize const& state() const
-		{
-			return stats_;
-		}
-
-		[[nodiscard]] size_type totalAllocated() const
-		{
-			return *stats_;
 		}
 	};
+
+	template <typename TKey>
+	using ListPoolAllocatorSync = GeoToolbox::PoolAllocator<TKey, std::pmr::synchronized_pool_resource, sizeof(TKey) + 2 * sizeof(void*)>;
 
 
 	class StringStorage
@@ -755,25 +581,25 @@ namespace GeoToolbox
 			*this = value;
 		}
 
-		[[nodiscard]] bool isInt() const
+		[[nodiscard]] bool IsInt() const
 		{
 			return (storage_ & 1) == 1;
 		}
 
-		[[nodiscard]] bool isPointer() const
+		[[nodiscard]] bool IsPointer() const
 		{
 			return (storage_ & 1) == 0;
 		}
 
-		[[nodiscard]] std::int64_t getInt() const
+		[[nodiscard]] std::int64_t GetInt() const
 		{
-			DEBUG_ASSERT(isInt(), std::invalid_argument);
+			DEBUG_ASSERT(IsInt(), std::invalid_argument);
 			return storage_ / 2;
 		}
 
 		[[nodiscard]] T* get() const
 		{
-			DEBUG_ASSERT(isPointer());
+			DEBUG_ASSERT(IsPointer());
 			return reinterpret_cast<T*>(storage_);
 		}
 
@@ -804,13 +630,13 @@ namespace GeoToolbox
 
 		[[nodiscard]] bool operator==(std::nullptr_t) const
 		{
-			DEBUG_ASSERT(isPointer());
+			DEBUG_ASSERT(IsPointer());
 			return storage_ == 0;
 		}
 
 		[[nodiscard]] bool operator!=(std::nullptr_t) const
 		{
-			DEBUG_ASSERT(isPointer());
+			DEBUG_ASSERT(IsPointer());
 			return !(*this == nullptr);
 		}
 	};

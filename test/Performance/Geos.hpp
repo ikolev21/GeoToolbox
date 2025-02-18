@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -99,7 +99,10 @@ struct GeosTemplateStrTree
 	static int QueryBox(IndexType& index, BoxType const& box)
 	{
 		auto count = 0;
-		index.query(ToEnvelope(box), [&count](auto) { ++count; });
+		index.query(ToEnvelope(box), [&count](auto)
+			{
+				++count;
+			});
 		return count;
 	}
 

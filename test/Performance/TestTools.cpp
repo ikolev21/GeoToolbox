@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -6,6 +6,7 @@
 #include "TestTools.hpp"
 
 #include "GeoToolbox/Image.hpp"
+#include "GeoToolbox/Iterators.hpp"
 
 #include "catch2/catch_session.hpp"
 #include "catch2/catch_template_test_macros.hpp"
@@ -93,11 +94,13 @@ pair<int, int> GetDatasetSizeRange()
 
 bool IsSelected(char const* envVarName, string_view currentValue, int printMessageWithIndent)
 {
-	auto const selectedValue = GetConfig().GetValue(envVarName);
-	auto const isSelected = selectedValue.empty() || FindString<CaseInsensitiveCharTraits>( currentValue, selectedValue) >= 0;
+	auto const selectedValueList = GetConfig().GetValue(envVarName);
+	auto const selectedValues = SplitIterator{ GetConfig().GetValue(envVarName), ',' }.toArray();
+	auto const isSelected = selectedValues.empty() || AnyOf(selectedValues, [&currentValue](auto const& v)
+		{ return FindString<CaseInsensitiveCharTraits>(currentValue, v) >= 0; });
 	if (!isSelected && printMessageWithIndent >= 0)
 	{
-		cout << string(printMessageWithIndent, '\t') << "Skipping " << currentValue << " (" << envVarName << " = " << selectedValue << ")\n";
+		cout << string(printMessageWithIndent, '\t') << "Skipped " << currentValue << " (" << envVarName << " = " << selectedValueList << ")\n";
 	}
 
 	return isSelected;
@@ -106,10 +109,10 @@ bool IsSelected(char const* envVarName, string_view currentValue, int printMessa
 
 constexpr string_view PerfRecordId = "RunEnvId/V";
 
-PerfRecord::PerfRecord(std::string name)
+PerfRecord::PerfRecord(std::string name, std::string runId)
 	: name_{ std::move(name) }
-	, environmentId_{ RUNTIME_ENVIRONMENT_ID }
-	, filepath_{ GetOutputPath() / std::filesystem::path{ name_ + '_' + environmentId_ + string(FileExtension) } }
+	, runId_{ !runId.empty() ? runId : RUNTIME_ENVIRONMENT_ID }
+	, filepath_{ GetOutputPath() / std::filesystem::path{ name_ + '_' + runId_ + string(FileExtension) } }
 {
 	Load();
 }
@@ -123,13 +126,18 @@ void PerfRecord::Save() const
 
 	ofstream outfile{ filepath_.string() };
 
+	if (!outfile)
+	{
+		throw runtime_error{ "Failed to open file for writing: "s + filepath_.filename().string() };
+	}
+
 	outfile << PerfRecordId << Version << Separator;
 	WriteFieldNames<Entry>(outfile);
 	outfile << Separator << TimeColumnName << Separator << MemoryDeltaColumnName << Separator << "Failed" << '\n';
 
 	for (auto const& entry : entries_)
 	{
-		outfile << environmentId_ << Separator;
+		outfile << runId_ << Separator;
 		WriteStruct(outfile, entry.first);
 		outfile << Separator << entry.second.bestTime << Separator << entry.second.memoryDelta << Separator << (entry.second.failed ? "FAILED!" : "") << '\n';
 	}
@@ -178,7 +186,7 @@ void PerfRecord::Load()
 		{
 			string envId;
 			ins >> envId;
-			if (envId != environmentId_)
+			if (envId != runId_)
 			{
 				continue;
 			}
@@ -203,8 +211,9 @@ void PerfRecord::Load()
 	}
 }
 
-void PerfRecord::MergeEntry(Entry const& entry, int64_t time, int64_t memoryDelta, bool failed)
+void PerfRecord::MergeEntry(Entry const& entry, int64_t time, int64_t memoryDelta, bool failed, std::pair<int64_t, int64_t>* accumulatedChange)
 {
+	auto const previousExisted = entries_.count(entry) > 0;
 	auto& stats = entries_[entry];
 	if (stats.failed != failed)
 	{
@@ -213,6 +222,19 @@ void PerfRecord::MergeEntry(Entry const& entry, int64_t time, int64_t memoryDelt
 	}
 
 	time = max(time, int64_t(1));
+	if( accumulatedChange != nullptr )
+	{
+		if( previousExisted && accumulatedChange->first >= 0 )
+		{
+			accumulatedChange->first += stats.bestTime;
+			accumulatedChange->second += time;
+		}
+		else
+		{
+			accumulatedChange->first = accumulatedChange->second = -1;
+		}
+	}
+
 	if (stats.bestTime > time)
 	{
 		stats.bestTime = time;
@@ -278,7 +300,7 @@ void Dataset<TSpatialKey>::SetSize(int newSize)
 		}
 		else
 		{
-			boundingBox_.Add(Bound(Iterable{ data_.begin() + size_, data_.begin() + newSize }));
+			boundingBox_.Add(Bound(Iterable{ data_.begin() + size_, data_.begin() + newSize }, GetFeatureBox));
 		}
 	}
 
@@ -290,7 +312,7 @@ auto Dataset<TSpatialKey>::GetBoundingBox() const -> BoxType
 {
 	if (boundingBox_.IsEmpty())
 	{
-		boundingBox_ = Bound(Iterable{ data_.begin(), data_.begin() + size_ });
+		boundingBox_ = Bound(MakeIterable(data_.begin(), size_), GetFeatureBox);
 	}
 
 	return boundingBox_;
@@ -348,7 +370,7 @@ int main( int argc, char* argv[] )
 {
 	for (auto i = 1; i < argc; ++i)
 	{
-		if (string(argv[i]) == "--")
+		if (string_view{ argv[i] } == "--")
 		{
 			GetConfig().AddCommandLine(Span{ argv + i, argv + argc });
 			argc = i;

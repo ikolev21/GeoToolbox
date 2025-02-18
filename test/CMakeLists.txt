@@ -1,4 +1,4 @@
-# Copyright 2024 Ivan Kolev
+# Copyright 2024-2025 Ivan Kolev
 #
 # Distributed under the Boost Software License, Version 1.0.
 # (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -20,9 +20,14 @@ if( WIN32 )
 	set( _id $ENV{COMPUTERNAME} )
 else()
 	set( _id $ENV{HOSTNAME} )
+	if( NOT _id )
+		execute_process( COMMAND hostname OUTPUT_VARIABLE _id )
+		string( REGEX REPLACE "[ \t\r\n]+" "" _id ${_id} )
+	endif()
 endif()
 if( NOT CMAKE_GENERATOR_TOOLSET STREQUAL "" )
-	set( _id ${_id}_${CMAKE_GENERATOR_TOOLSET} )
+	string( REGEX MATCH "[a-zA-Z0-9_]+" _toolset ${CMAKE_GENERATOR_TOOLSET} )
+	set( _id ${_id}_${_toolset} )
 else()
 	set( _id ${_id}_${CMAKE_CXX_COMPILER_ID} )
 endif()
@@ -32,7 +37,7 @@ endif()
 
 string( TOLOWER ${_id} _id )
 
-set( RUNTIME_ENVIRONMENT_ID ${_id} CACHE STRING "A string that identifies the runtime environment of tests, that's the machine name and the build toolset" )
+set( RUNTIME_ENVIRONMENT_ID ${_id} CACHE STRING "A string that identifies the runtime environment of tests, by default the machine name and the build toolset are used" )
 
 string( REGEX MATCH "[a-zA-Z0-9_]+" _CHECK_ID ${RUNTIME_ENVIRONMENT_ID} )
 if( NOT _CHECK_ID STREQUAL ${RUNTIME_ENVIRONMENT_ID} )

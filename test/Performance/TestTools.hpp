@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,12 +7,14 @@
 
 #include "GeoToolbox/Config.hpp"
 #include "GeoToolbox/DescribeStruct.hpp"
+#include "GeoToolbox/Profiling.hpp"
 #include "GeoToolbox/Span.hpp"
 #include "GeoToolbox/SpatialTools.hpp"
 
 #include "catch2/generators/catch_generators.hpp"
 
 #include <filesystem>
+#include <iostream>
 #include <map>
 #include <utility>
 
@@ -42,6 +44,14 @@ std::string GetCatchTestName();
 bool IsSelected(char const* envVarName, std::string_view currentValue, int printMessageWithIndent = -1);
 
 
+inline void WarnInDebugBuild()
+{
+#ifndef NDEBUG
+	std::cout << "\nWARNING! Running unoptimized (not 'Release') build\n";
+#endif // !NDEBUG
+}
+
+
 std::pair<int, int> GetDatasetSizeRange();
 
 inline int GetDatasetSizeFromOrder(int order)
@@ -57,6 +67,11 @@ public:
 	using BoxType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::BoxType;
 
 	Dataset() = default;
+	//~Dataset() = default;
+	//Dataset(Dataset const&) = delete;
+	//Dataset& operator=(Dataset const&) = delete;
+	//Dataset(Dataset&&) = default;
+	//Dataset& operator=(Dataset&&) = default;
 
 	Dataset(std::string name, std::vector<GeoToolbox::Feature<TSpatialKey>> data)
 		: name_{ std::move(name) }
@@ -100,7 +115,7 @@ public:
 
 		if constexpr (GeoToolbox::SpatialKeyIsPoint<TSpatialKey>)
 		{
-			return GeoToolbox::Transform(data_, [](auto const& feature)
+			return GeoToolbox::Transform(GetData(), [](auto const& feature)
 				{
 					return VectorTraits::ToArray(feature.spatialKey);
 				});
@@ -108,7 +123,7 @@ public:
 		else
 		{
 			static_assert(GeoToolbox::SpatialKeyIsBox<TSpatialKey>);
-			return GeoToolbox::Transform(data_, [](auto const& feature)
+			return GeoToolbox::Transform(GetData(), [](auto const& feature)
 				{
 					return GeoToolbox::Box<typename VectorTraits::ArrayType>{ VectorTraits::ToArray(feature.spatialKey.Min()), VectorTraits::ToArray(feature.spatialKey.Max()) };
 				});
@@ -117,9 +132,21 @@ public:
 
 	BoxType GetBoundingBox() const;
 
+	auto GetSmallestExtent() const
+	{
+		return GeoToolbox::MinimumValue(GetBoundingBox().Sizes()).first;
+	}
+
 	void Clear();
 
 private:
+
+	static BoxType GetFeatureBox(GeoToolbox::Feature<TSpatialKey> const& feature)
+	{
+		return BoxType(feature.spatialKey);
+	}
+
+
 	std::string name_;
 
 	std::vector<GeoToolbox::Feature<TSpatialKey>> data_{};
@@ -144,8 +171,10 @@ void Draw(GeoToolbox::Image& image, Dataset<TSpatialKey> const& set)
 }
 
 
-struct PerfRecord
+class PerfRecord
 {
+public:
+
 	static constexpr auto Version = 1;
 
 	struct Entry
@@ -191,7 +220,7 @@ private:
 	};
 
 	std::string name_;
-	std::string environmentId_;
+	std::string runId_;
 	std::filesystem::path filepath_;
 
 	std::map<Entry, Stats> entries_;
@@ -202,7 +231,7 @@ private:
 
 public:
 
-	explicit PerfRecord(std::string name);
+	explicit PerfRecord(std::string name, std::string runId = "");
 
 	void Save() const;
 
@@ -223,7 +252,7 @@ public:
 		};
 	}
 
-	void MergeEntry(Entry const& entry, int64_t time, int64_t memoryDelta = 0, bool failed = false);
+	void MergeEntry(Entry const& entry, int64_t time, int64_t memoryDelta = 0, bool failed = false, std::pair<int64_t, int64_t>* accumulatedChange = nullptr);
 
 	void SetEntry(Entry const& entry, int64_t time, int64_t memoryDelta = 0, bool failed = false);
 };

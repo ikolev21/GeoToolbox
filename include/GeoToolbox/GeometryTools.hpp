@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -170,12 +170,14 @@ namespace GeoToolbox
 
 		static constexpr auto MinimumValue(TVector const& a)
 		{
-			return *std::min_element(&a[0], &a[0] + VectorTraits<TVector>::Dimensions);
+			auto const position = std::min_element(&a[0], &a[0] + VectorTraits<TVector>::Dimensions);
+			return std::pair{ *position, position - &a[0] };
 		}
 
 		static constexpr auto MaximumValue(TVector const& a)
 		{
-			return *std::max_element(&a[0], &a[0] + VectorTraits<TVector>::Dimensions);
+			auto const position = std::max_element(&a[0], &a[0] + VectorTraits<TVector>::Dimensions);
+			return std::pair{ *position, position - &a[0] };
 		}
 
 		static constexpr auto DotProduct(TVector const& a, TVector const& b)
@@ -201,7 +203,7 @@ namespace GeoToolbox
 	using Vector = std::array<TScalar, NDimensions>;
 
 	template <class T>
-	constexpr bool IsArrayVector = false;
+	constexpr auto IsArrayVector = false;
 
 	template <typename TScalar, size_t NDimensions>
 	constexpr bool IsArrayVector<std::array<TScalar, NDimensions>> = VectorTraits<std::array<TScalar, NDimensions>>::Dimensions > 0;
@@ -430,6 +432,16 @@ namespace GeoToolbox
 			return Box{ GeoToolbox::Min(a, b), GeoToolbox::Max(a, b) };
 		}
 
+		static constexpr Box FromMinAndSize(VectorType min, ScalarType size)
+		{
+			return Box{ min, min + Flat<VectorType>(size) };
+		}
+
+		static constexpr Box FromMinAndSizes(VectorType min, VectorType sizes)
+		{
+			return Box{ min, min + sizes };
+		}
+
 		[[nodiscard]] constexpr VectorType const& Min() const noexcept
 		{
 			return ends_[0];
@@ -480,6 +492,8 @@ namespace GeoToolbox
 		{
 			// this may be NaN, point not
 			DEBUG_ASSERT(AllOf(point, [](auto x) { return !std::isnan(x); }));
+
+			// Can't use std::min/max here, this must work for empty boxes that use nan coordinates, hence the weird comparisons
 			ends_[0] = ComponentApply(ends_[0], point, [](auto x, auto y) { return !(x <= y) ? y : x; });
 			ends_[1] = ComponentApply(ends_[1], point, [](auto x, auto y) { return !(x >= y) ? y : x; });
 			return *this;
@@ -517,8 +531,72 @@ namespace GeoToolbox
 	using Box3 = Box<Vector3>;
 
 
+	template <typename T>
+	struct GetVectorType
+	{
+		using type = T;
+	};
+
+	template <typename T>
+	struct GetVectorType<Box<T>>
+	{
+		using type = T;
+	};
+
+	template <typename T>
+	[[nodiscard]] auto GetLowBound(T const& key)
+	{
+		if constexpr (IsSpecialization<T, Box>)
+		{
+			return key[0];
+		}
+		else
+		{
+			return key;
+		}
+	}
+
+	template <typename T>
+	[[nodiscard]] auto GetHighBound(T const& key)
+	{
+		if constexpr (IsSpecialization<T, Box>)
+		{
+			return key[1];
+		}
+		else
+		{
+			return key;
+		}
+	}
+
+	template <typename T>
+	[[nodiscard]] auto GetLowBound(T const& key, int axis)
+	{
+		if constexpr (IsSpecialization<T, Box>)
+		{
+			return key[0][axis];
+		}
+		else
+		{
+			return key[axis];
+		}
+	}
+
+	template <typename T>
+	auto GetHighBound(T const& key, int axis)
+	{
+		if constexpr (IsSpecialization<T, Box>)
+		{
+			return key[1][axis];
+		}
+		else
+		{
+			return key[axis];
+		}
+	}
+
 	template <class TVector>
-	bool Overlap(Box<TVector> const& a, Box<TVector> const& b)
+	[[nodiscard]] bool Overlap(Box<TVector> const& a, Box<TVector> const& b) noexcept
 	{
 		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
 		{
@@ -532,7 +610,7 @@ namespace GeoToolbox
 	}
 
 	template <class TVector>
-	bool Overlap(Box<TVector> const& box, TVector const& point)
+	[[nodiscard]] bool Overlap(Box<TVector> const& box, TVector const& point) noexcept
 	{
 		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
 		{
@@ -546,7 +624,7 @@ namespace GeoToolbox
 	}
 
 	template <class TVector>
-	Box<TVector> Intersect(Box<TVector> const& a, Box<TVector> const& b)
+	[[nodiscard]] Box<TVector> Intersect(Box<TVector> const& a, Box<TVector> const& b) noexcept
 	{
 		auto min = a.Min();
 		auto max = a.Max();
@@ -572,9 +650,9 @@ namespace GeoToolbox
 	}
 
 	template <class TVector>
-	typename Box<TVector>::VectorType GetClosestPointOnBox(Box<TVector> const& box, typename Box<TVector>::VectorType targetPoint)
+	[[nodiscard]] typename Box<TVector>::VectorType GetClosestPointOnBox(Box<TVector> const& box, typename Box<TVector>::VectorType targetPoint)
 	{
-		TVector closest;
+		TVector closest{} /* [[indeterminate]] */;
 		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
 		{
 			closest[i] = std::clamp(targetPoint[i], box.Min()[i], box.Max()[i]);
@@ -584,57 +662,48 @@ namespace GeoToolbox
 	}
 
 	template <class TVector>
-	auto GetDistanceSquared(TVector const& a, TVector const& b)
+	[[nodiscard]] auto GetDistanceSquared(TVector const& a, TVector const& b)
 	{
 		return VectorTraits<TVector>::GetDistanceSquared(a, b);
 	}
 
 	template <class TVector>
-	auto GetDistance(TVector const& a, TVector const& b)
+	[[nodiscard]] auto GetDistance(TVector const& a, TVector const& b)
 	{
 		return std::sqrt(GetDistanceSquared(a, b));
 	}
 
 	template <class TVector>
-	auto GetDistanceSquared(TVector const& point, Box<TVector> const& box)
+	[[nodiscard]] auto GetDistanceSquared(TVector const& point, Box<TVector> const& box)
 	{
 		auto const closest = GetClosestPointOnBox(box, point);
 		return GetDistanceSquared(point, closest);
 	}
 
 	template <class TVector>
-	auto GetDistance(TVector const& a, Box<TVector> const& b)
+	[[nodiscard]] auto GetDistance(TVector const& a, Box<TVector> const& b)
 	{
 		return std::sqrt(GetDistanceSquared(a, b));
 	}
 
 
-	template <class TIndexable>
-	struct BoxBoundTraits;
-
-	template <class TVector>
-	struct BoxBoundTraits<Box<TVector>>
-	{
-		using BoxType = Box<TVector>;
-
-		static BoxType const& GetBox(BoxType const& box)
-		{
-			return box;
-		}
-	};
-
-	template <class TIterable>
-	typename BoxBoundTraits<typename TIterable::value_type>::BoxType Bound(TIterable const& elements)
+	template <class TIterable, class TGetBoxFunc>
+	[[nodiscard]] auto Bound(TIterable const& elements, TGetBoxFunc getBoxFunc)
 	{
 		// TODO: parallel reduce
-		using ElementType = typename TIterable::value_type;
-		typename BoxBoundTraits<ElementType>::BoxType result;
+		std::decay_t<decltype(Box{ getBoxFunc(*elements.begin()) }) > result;
 		for (auto const& element : elements)
 		{
-			result.Add(BoxBoundTraits<ElementType>::GetBox(element));
+			result.Add(getBoxFunc(element));
 		}
 
 		return result;
+	}
+
+	template <class TIterable>
+	[[nodiscard]] auto Bound(TIterable const& elements)
+	{
+		return Bound(elements, Identity{});
 	}
 
 	inline std::ostream& operator<<(std::ostream& stream, Vector2 const& point)

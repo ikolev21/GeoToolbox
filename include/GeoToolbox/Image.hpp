@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -51,12 +51,21 @@ namespace GeoToolbox
 
 		void Fill(Color);
 
-		void Draw(Vector2 const& location, unsigned color);
+		void Draw(int x, int y, Color color);
 
-		void DrawHorizontal(double y, double left, double right, unsigned color);
+		void Draw(Vector2 const& location, Color color);
 
-		void DrawVertical(double x, double top, double bottom, unsigned color);
+		void DrawHorizontal(double y, double left, double right, Color color);
 
-		void Draw(Box2 const&, unsigned color);
+		void DrawVertical(double x, double top, double bottom, Color color);
+
+		void Draw(Box2 const&, Color color);
+
+	private:
+
+		[[nodiscard]] double FlipY(double y) const noexcept
+		{
+			return height_ - 1 - y;
+		}
 	};
 }

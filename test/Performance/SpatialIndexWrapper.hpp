@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -6,9 +6,17 @@
 #pragma once
 
 #include "TestTools.hpp"
+#include "GeoToolbox/Iterators.hpp"
+
+//#pragma warning( push )
+//
+//#pragma warning( disable : 4244 )
+//#include <hash_set8.hpp>
+//
+//#pragma warning( pop )
 
 #include <random>
-#include <unordered_set>
+#include <set>
 
 // This class defines the common interface for spatial index wrappers
 template <typename TSpatialKey>
@@ -33,6 +41,11 @@ struct SpatialIndexWrapper
 		return {};
 	}
 
+	static IndexType Load(Dataset<TSpatialKey> const& /*dataset*/, GeoToolbox::SharedAllocatedSize /*allocatorStats*/)
+	{
+		return {};
+	}
+
 	// Some indices (Spatial++ "idle" trees) need explicit re-balancing after insert/erase
 	static void Rebalance(IndexType&)
 	{
@@ -44,7 +57,7 @@ struct SpatialIndexWrapper
 		return -1;
 	}
 
-	// Return the sum of the squared distances to the nearest found features. This is more reliable than the feature ids, as different features may be returned if they are at close distance
+	// Return the sum of the squared distances to the nearest found features. This is more reliable than the feature ids, as different features may be returned if they are at the same distance.
 	// Return negative value if this query is not supported
 	static double QueryNearest(IndexType const& /*index*/, VectorType const& /*location*/, int /*nearestCount*/)
 	{
@@ -70,9 +83,11 @@ struct StdContainer
 
 	using IndexType = TContainer;
 
+	using AllocatorType = typename TContainer::allocator_type;
+
 	static IndexType MakeEmptyIndex(GeoToolbox::SharedAllocatedSize allocatorStats)
 	{
-		return IndexType(GeoToolbox::ProfileAllocator<FeaturePtr>{ std::move(allocatorStats) });
+		return IndexType{ AllocatorType{ std::move(allocatorStats) } };
 	}
 
 	// Some indices (Spatial++ "idle" trees) need explicit re-balancing after insert/erase
@@ -83,8 +98,9 @@ struct StdContainer
 	// Return the count of the features found to intersect the box. Return negative value if this query is not supported
 	static int QueryBox(IndexType const& index, BoxType const& box)
 	{
-		return /*Parallel*/GeoToolbox::CountIf(index, [&box](auto&& feature)
+		return GeoToolbox::/*Parallel*/CountIf(index, [&box](auto&& feature)
 			{
+				GeoToolbox::AddQueryStats_ObjectOverlapsCount();
 				return Overlap(box, feature->spatialKey);
 			});
 	}
@@ -138,18 +154,21 @@ struct StdVector : StdContainer<TSpatialKey, std::vector<FeaturePtr, GeoToolbox:
 	static bool Erase(IndexType& index, FeaturePtr feature);
 };
 
-template <typename TSpatialKey, typename FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*>
-struct StdHashset : StdContainer<TSpatialKey, std::unordered_set<FeaturePtr, std::hash<FeaturePtr>, std::equal_to<FeaturePtr>, GeoToolbox::ProfileAllocator<FeaturePtr>>>
+template <
+	typename TSpatialKey,
+	typename FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*,
+	class TElementAllocator = GeoToolbox::ProfileAllocator<FeaturePtr*, GeoToolbox::ListPoolAllocatorSync<FeaturePtr>>>
+struct StdHashset : StdContainer<TSpatialKey, std::unordered_set<FeaturePtr, std::hash<FeaturePtr>, std::equal_to<FeaturePtr>, TElementAllocator>>
 {
 	static constexpr std::string_view Name = "std::unordered_set";
 
-	using BaseType = StdContainer<TSpatialKey, std::unordered_set<FeaturePtr, std::hash<FeaturePtr>, std::equal_to<FeaturePtr>, GeoToolbox::ProfileAllocator<FeaturePtr>>>;
-	using IndexType = typename BaseType::IndexType;
+	using IndexType = std::unordered_set<FeaturePtr, std::hash<FeaturePtr>, std::equal_to<FeaturePtr>, TElementAllocator>;
+	using BaseType = StdContainer<TSpatialKey, IndexType>;
 
 	static IndexType Load(Dataset<TSpatialKey> const& dataset, GeoToolbox::SharedAllocatedSize allocatorStats)
 	{
 		auto const data = dataset.GetData();
-		return { GeoToolbox::SelfIterator{ data.begin() }, GeoToolbox::SelfIterator{ data.end() }, 0, GeoToolbox::ProfileAllocator<FeaturePtr>{ std::move(allocatorStats) } };
+		return IndexType{ GeoToolbox::ValueIterator{ data.data() }, GeoToolbox::ValueIterator{ data.data() + data.size() }, 0, TElementAllocator{ std::move(allocatorStats) } };
 	}
 
 	static void Insert(IndexType& index, FeaturePtr feature)
@@ -163,3 +182,69 @@ struct StdHashset : StdContainer<TSpatialKey, std::unordered_set<FeaturePtr, std
 		return index.erase(feature) > 0;
 	}
 };
+
+template <
+	typename TSpatialKey,
+	typename FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*,
+	class TElementAllocator = GeoToolbox::ProfileAllocator<FeaturePtr, GeoToolbox::ListPoolAllocatorSync<FeaturePtr>>>
+struct StdSet : StdContainer<TSpatialKey, std::set<FeaturePtr, std::less<FeaturePtr>, TElementAllocator>>
+{
+	static constexpr std::string_view Name = "std::set";
+
+	using IndexType = std::set<FeaturePtr, std::less<FeaturePtr>, TElementAllocator>;
+	using BaseType = StdContainer<TSpatialKey, IndexType>;
+
+	static IndexType Load(Dataset<TSpatialKey> const& dataset, GeoToolbox::SharedAllocatedSize allocatorStats)
+	{
+		auto const data = dataset.GetData();
+		return IndexType{ GeoToolbox::ValueIterator{ data.data() }, GeoToolbox::ValueIterator{ data.data() + data.size() }, TElementAllocator{ std::move(allocatorStats) } };
+	}
+
+	static void Insert(IndexType& index, FeaturePtr feature)
+	{
+		DEBUG_ASSERT(!Contains(index, feature));
+		index.insert(feature);
+	}
+
+	static bool Erase(IndexType& index, FeaturePtr feature)
+	{
+		return index.erase(feature) > 0;
+	}
+};
+
+#if 0
+
+template <
+	typename TSpatialKey,
+	typename FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*>
+struct EmhashSet8 : StdContainer<TSpatialKey, emhash8::HashSet<FeaturePtr>>
+{
+	static constexpr std::string_view Name = "EmhashSet8";
+
+	using IndexType = emhash8::HashSet<FeaturePtr>;
+	using BaseType = StdContainer<TSpatialKey, IndexType>;
+
+	static IndexType MakeEmptyIndex(GeoToolbox::SharedAllocatedSize)
+	{
+		return IndexType{};
+	}
+
+	static IndexType Load(Dataset<TSpatialKey> const& dataset, GeoToolbox::SharedAllocatedSize)
+	{
+		auto const data = dataset.GetData();
+		return IndexType{ GeoToolbox::ValueIterator{ data.data() }, GeoToolbox::ValueIterator{ data.data() + data.size() } };
+	}
+
+	static void Insert(IndexType& index, FeaturePtr feature)
+	{
+		DEBUG_ASSERT(!Contains(index, feature));
+		index.insert(feature);
+	}
+
+	static bool Erase(IndexType& index, FeaturePtr feature)
+	{
+		return index.erase(feature) > 0;
+	}
+};
+
+#endif

@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -67,6 +67,193 @@ namespace GeoToolbox
 	};
 
 
+	class ProfileMemoryResource : public std::pmr::memory_resource
+	{
+		memory_resource* upstream_;
+		ptrdiff_t allocationsCount = 0;
+		ptrdiff_t deallocationsCount = 0;
+		ptrdiff_t allocatedSize = 0;
+		ptrdiff_t deallocatedSize = 0;
+
+	public:
+
+		ProfileMemoryResource(memory_resource* upstream = nullptr)
+			: upstream_{ upstream != nullptr ? upstream : std::pmr::get_default_resource() }
+		{
+		}
+
+		~ProfileMemoryResource() override = default;
+		ProfileMemoryResource(ProfileMemoryResource const&) = default;
+		ProfileMemoryResource(ProfileMemoryResource&&) = default;
+		ProfileMemoryResource& operator=(ProfileMemoryResource const&) = default;
+		ProfileMemoryResource& operator=(ProfileMemoryResource&&) = default;
+
+		[[nodiscard]] ptrdiff_t GetCurrentAllocationsCount() const noexcept
+		{
+			return allocationsCount - deallocationsCount;
+		}
+
+		[[nodiscard]] ptrdiff_t GetCurrentAllocatedSize() const noexcept
+		{
+			return allocatedSize - deallocatedSize;
+		}
+
+	private:
+
+		void* do_allocate(size_t bytes, size_t alignment) override
+		{
+			++allocationsCount;
+			allocatedSize += ptrdiff_t(bytes);
+			return upstream_->allocate(bytes, alignment);
+		}
+
+		void do_deallocate(void* p, size_t bytes, size_t alignment) override
+		{
+			//ASSERT(deallocationsCount < allocationsCount);
+			//ASSERT(deallocatedSize < allocatedSize);
+			++deallocationsCount;
+			deallocatedSize += ptrdiff_t(bytes);
+			//if (deallocationsCount == allocationsCount)
+			//{
+			//	ASSERT(deallocatedSize == allocatedSize);
+			//}
+
+			return upstream_->deallocate(p, bytes, alignment);
+		}
+
+		[[nodiscard]] bool do_is_equal(memory_resource const& other) const noexcept override
+		{
+			return this == &other;
+		}
+	};
+
+	struct TotalAllocatedStats
+	{
+		using StatsType = std::shared_ptr<std::atomic<std::int64_t>>;
+
+		StatsType stats = std::make_shared<std::atomic<std::int64_t>>();
+
+		~TotalAllocatedStats() = default;
+		TotalAllocatedStats() = default;
+
+		/*explicit(false)*/ TotalAllocatedStats(StatsType stats)
+			: stats(std::move(stats))
+		{
+		}
+
+		TotalAllocatedStats(TotalAllocatedStats const&) noexcept = default;
+		TotalAllocatedStats& operator=(TotalAllocatedStats const&) noexcept = default;
+
+		TotalAllocatedStats(TotalAllocatedStats&& other) noexcept
+			: stats(other.stats)
+		{
+		}
+
+		TotalAllocatedStats& operator=(TotalAllocatedStats&& other) noexcept
+		{
+			stats = other.stats;
+			return *this;
+		}
+
+		void Add(std::size_t size, std::size_t count = 1) const
+		{
+			*stats += size * count;
+		}
+
+		void Remove(std::size_t size, std::size_t count = 1) const
+		{
+			*stats -= size * count;
+		}
+	};
+
+	using SharedAllocatedSize = std::shared_ptr<std::atomic<std::int64_t>>;
+
+	// Adapted from boost/container/new_allocator.hpp
+	template <typename T, class TAllocator = std::allocator<T>, class TStats = TotalAllocatedStats>
+	class ProfileAllocator : public TAllocator
+	{
+		TStats stats_;
+
+	public:
+
+		using value_type = typename TAllocator::value_type;
+		using pointer = typename std::allocator_traits<TAllocator>::pointer;
+		using const_pointer = typename std::allocator_traits<TAllocator>::const_pointer;
+		//using reference = typename TAllocator::reference;
+		//using const_reference = typename TAllocator::const_reference;
+		using size_type = std::size_t;
+		using difference_type = std::ptrdiff_t;
+
+		template <class T2>
+		struct rebind
+		{
+			using TAllocator2 = typename std::allocator_traits<TAllocator>::template rebind_alloc<T2>;
+			using other = ProfileAllocator<T2, TAllocator2, TStats>;
+		};
+
+		~ProfileAllocator() = default;
+		ProfileAllocator() = default;
+
+		explicit ProfileAllocator(TStats stats) noexcept
+			: stats_(std::move(stats))
+		{
+		}
+
+		ProfileAllocator(ProfileAllocator const&) noexcept = default;
+		ProfileAllocator(ProfileAllocator&&) noexcept = default;
+
+		ProfileAllocator& operator=(ProfileAllocator const&) noexcept = default;
+		ProfileAllocator& operator=(ProfileAllocator&&) noexcept = default;
+
+		template <class T2, class TAllocator2>
+		/*explicit( false )*/ ProfileAllocator(ProfileAllocator<T2, TAllocator2, TStats> const& other)
+			: TAllocator(other)
+			, stats_(other.GetStats())
+		{
+		}
+
+		pointer allocate(size_type count)
+		{
+			static constexpr auto MaxCount = std::size_t(-1) / (2 * sizeof(value_type));
+			if (count > MaxCount)
+			{
+				throw std::bad_alloc{};
+			}
+
+			stats_.Add(count, sizeof(value_type));
+			return TAllocator::allocate(count);
+		}
+
+		void deallocate(pointer ptr, size_type count) noexcept
+		{
+			stats_.Remove(count, sizeof(value_type));
+			TAllocator::deallocate(ptr, count);
+		}
+
+		friend void swap(ProfileAllocator& a, ProfileAllocator& b) noexcept
+		{
+			std::swap(a.stats_, b.stats_);
+		}
+
+		friend bool operator==(ProfileAllocator const& a, ProfileAllocator const& b) noexcept
+		{
+			//return static_cast<TAllocator const&>( a ) == static_cast<TAllocator const&>( b );
+			return a.stats_ == b.stats_;
+		}
+
+		friend bool operator!=(ProfileAllocator const& a, ProfileAllocator const& b) noexcept
+		{
+			return !(a == b);
+		}
+
+
+		[[nodiscard]] TStats const& GetStats() const
+		{
+			return stats_;
+		}
+	};
+
+
 	struct MeasureResult
 	{
 		double result;
@@ -128,6 +315,23 @@ namespace GeoToolbox
 
 	private:
 
+		int64_t const minimumRunningTimeUs_;
+
+		int const maximumIterationCount_;
+
+		ContainerType actions_;
+
+		Stopwatch timer_{ false };
+
+		int64_t totalRunningTime_ = 0;
+
+		int64_t iterationStartTime_ = 0;
+
+		int64_t bestIterationTime_ = std::numeric_limits<int64_t>::max();
+
+		int iterationCount_ = 0;
+
+
 		class Recorder final
 		{
 			Timings* owner_ = nullptr;
@@ -179,23 +383,6 @@ namespace GeoToolbox
 				}
 			}
 		};
-
-
-		int64_t const minimumRunningTimeUs_;
-
-		int const maximumIterationCount_;
-
-		ContainerType actions_;
-
-		Stopwatch timer_{ false };
-
-		int64_t totalRunningTime_ = 0;
-
-		int64_t iterationStartTime_ = 0;
-
-		int64_t bestIterationTime_ = std::numeric_limits<int64_t>::max();
-
-		int iterationCount_ = 0;
 
 	public:
 

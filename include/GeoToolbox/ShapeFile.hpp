@@ -1,10 +1,11 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
 
+#include "Span.hpp"
 #include "SpatialTools.hpp"
 
 #include <filesystem>
@@ -60,6 +61,10 @@ namespace GeoToolbox
 	public:
 
 		explicit ShapeFile(std::filesystem::path filePath);
+
+		static bool Write(std::filesystem::path const& filePath, Span<Vector2 const> );
+
+		static bool Write(std::filesystem::path const& filePath, Span<Box2 const> );
 
 		[[nodiscard]] std::filesystem::path const& GetFilePath() const noexcept
 		{

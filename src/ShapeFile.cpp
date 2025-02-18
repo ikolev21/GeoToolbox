@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -84,5 +84,58 @@ namespace GeoToolbox
 		}
 
 		return result;
+	}
+
+	bool ShapeFile::Write(std::filesystem::path const& filePath, Span<Vector2 const> points)
+	{
+		ShapeFilePtr const shapeFile{ SHPCreate(filePath.string().c_str(), SHPT_POINT) };
+		if (shapeFile == nullptr)
+		{
+			return false;
+		}
+
+		for (auto const& p : points)
+		{
+			ShapeObjectPtr const obj{ SHPCreateSimpleObject(SHPT_POINT, 1, &p[0], &p[1], nullptr) };
+			if (obj == nullptr)
+			{
+				return false;
+			}
+
+			SHPWriteObject(static_cast<SHPInfo*>(shapeFile.get()), -1, obj.get());
+		}
+
+		return true;
+	}
+
+	bool ShapeFile::Write(std::filesystem::path const& filePath, Span<Box2 const> boxes)
+	{
+		ShapeFilePtr const shapeFile{ SHPCreate(filePath.string().c_str(), SHPT_POLYGON ) };
+		if (shapeFile == nullptr)
+		{
+			return false;
+		}
+
+		std::array<double, 4> x{}, y{};
+		for (auto const& box : boxes)
+		{
+			x[0] = box.Min()[0];
+			y[0] = box.Min()[1];
+			x[1] = box.Max()[0];
+			y[1] = box.Min()[1];
+			x[2] = box.Max()[0];
+			y[2] = box.Max()[1];
+			x[3] = box.Min()[0];
+			y[3] = box.Max()[1];
+			ShapeObjectPtr const obj{ SHPCreateSimpleObject(SHPT_POLYGON, 4, x.data(), y.data(), nullptr) };
+			if (obj == nullptr)
+			{
+				return false;
+			}
+
+			SHPWriteObject(static_cast<SHPInfo*>(shapeFile.get()), -1, obj.get());
+		}
+
+		return true;
 	}
 }

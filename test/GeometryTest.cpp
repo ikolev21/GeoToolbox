@@ -1,13 +1,15 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #include "GeoToolbox/GeometryTools.hpp"
 
+#include "GeoToolbox/Iterators.hpp"
 #include "GeoToolbox/Profiling.hpp"
 #include "GeoToolbox/SpatialTools.hpp"
 
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <iostream>
@@ -27,8 +29,8 @@ TEST_CASE("Vector")
 	REQUIRE(z[0] == 2);
 	REQUIRE(z[1] == 3);
 
-	REQUIRE(MinimumValue(z) == 2.0);
-	REQUIRE(MaximumValue(z) == 3.0);
+	REQUIRE(MinimumValue(z).first == 2.0);
+	REQUIRE(MaximumValue(z).first == 3.0);
 
 	z = 2 * Flat<Vector2>(1.0);
 	REQUIRE(z[0] == 2.0);
@@ -52,11 +54,11 @@ TEST_CASE("Vector")
 
 TEST_CASE("Box")
 {
-	STATIC_REQUIRE(Box2().IsEmpty());
+	STATIC_REQUIRE(Box2{}.IsEmpty());
 
 	STATIC_REQUIRE(Box2::Bound({ 0, 1 }, { 1, 0 }) == Box2({ 0, 0 }, { 1, 1 }));
 	// array::op== is constexpr since C++20, can't do STATIC_REQUIRE
-	REQUIRE(Box2() + Vector2{ 1, 1 } == Box2({ 1, 1 }));
+	REQUIRE(Box2{} + Vector2{ 1, 1 } == Box2({ 1, 1 }));
 
 	constexpr Vector2 a{ 0, 1 };
 	constexpr Vector2 b{ 1, 0 };
@@ -73,15 +75,31 @@ TEST_CASE("Box")
 	REQUIRE(box == Box2({ 0, 0 }, { 2, 2 }));
 	REQUIRE(box.Center() == Vector2{ 1, 1 });
 
-	REQUIRE(Box2().Add({ 1, 1 }) == Box2({ 1, 1 }));
+	REQUIRE(Box2{}.Add({ 1, 1 }) == Box2({ 1, 1 }));
 
 	{
 		array const boxes = { Box2{ { 0, 0 }, { 1, 1 } }, Box2{ { 1, 1 }, { 2, 2 } } };
 		REQUIRE(Bound(boxes) == Box2{ { 0, 0 }, { 2, 2 } });
+	}
+	{
+		array const points = { Vector2{ 0, 0 }, Vector2{ 1, 1 }, Vector2{ 2, 2 } };
+		REQUIRE(Bound(points) == Box2{ { 0, 0 }, { 2, 2 } });
 	}
 }
 
 TEST_CASE("Feature")
 {
 	[[maybe_unused]] std::unordered_set<Feature<Vector2>> const featureCanBeStoredInAHashContainer;
+}
+
+
+template <class TTree>
+FeatureId AccumulateRange(TTree const& tree, Box2 const& box)
+{
+	using ElementType = typename TTree::ElementType;
+	return std::accumulate(
+		tree.BeginRangeQuery(box),
+		tree.EndRangeQuery(),
+		FeatureId(0),
+		[](FeatureId acc, ElementType const& el) -> FeatureId { return acc + el->id; });
 }

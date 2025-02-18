@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -12,6 +12,9 @@
 
 namespace GeoToolbox
 {
+	// A common constant that may be used by tree-based spatial indices. This cannot be determined at runtime because at least one index (Boost R-Tree) needs it as a template parameter
+	static constexpr auto MaxElementsPerNode = 32;
+
 	enum class SpatialKeyKind
 	{
 		Undefined,
@@ -110,23 +113,79 @@ namespace GeoToolbox
 		}
 	};
 
-	template <typename TSpatialKey>
-	struct BoxBoundTraits<Feature<TSpatialKey>>
-	{
-		using BoxType = typename SpatialKeyTraits<TSpatialKey>::BoxType;
-
-		static BoxType GetBox(Feature<TSpatialKey> const& feature)
-		{
-			return BoxType(feature.spatialKey);
-		}
-	};
-
 	using SpatialKeyTypes = TypeList<
 		Vector2, Box2
 #if defined( ENABLE_EIGEN )
 		, EVector2, Box<EVector2>
 #endif
 		/*, Vector3, Box3*/>;
+
+//#define ENABLE_QUERYSTATS
+
+#ifdef ENABLE_QUERYSTATS
+	extern struct QueryStats
+	{
+		int ScalarComparisonsCount;
+		int BoxOverlapsCount;
+		int ObjectOverlapsCount;
+
+		[[nodiscard]] bool IsEmpty() noexcept
+		{
+			return ScalarComparisonsCount == 0 && BoxOverlapsCount == 0 && ObjectOverlapsCount == 0;
+		}
+
+		void Clear() noexcept
+		{
+			ScalarComparisonsCount = 0;
+			BoxOverlapsCount = 0;
+			ObjectOverlapsCount = 0;
+		}
+	} TheQueryStats;
+
+	inline void AddQueryStats_ScalarComparisonsCount()
+	{
+		++TheQueryStats.ScalarComparisonsCount;
+	}
+
+	inline void AddQueryStats_BoxOverlapsCount()
+	{
+		++TheQueryStats.BoxOverlapsCount;
+	}
+
+	inline void AddQueryStats_ObjectOverlapsCount()
+	{
+		++TheQueryStats.ObjectOverlapsCount;
+	}
+
+#else
+	extern struct QueryStats
+	{
+		int ScalarComparisonsCount;
+		int BoxOverlapsCount;
+		int ObjectOverlapsCount;
+
+		[[nodiscard]] bool IsEmpty() noexcept
+		{
+			return true;
+		}
+
+		void Clear() noexcept
+		{
+		}
+	} TheQueryStats;
+
+	inline void AddQueryStats_ScalarComparisonsCount()
+	{
+	}
+
+	inline void AddQueryStats_BoxOverlapsCount()
+	{
+	}
+
+	inline void AddQueryStats_ObjectOverlapsCount()
+	{
+	}
+#endif
 }
 
 template <typename TSpatialKey>

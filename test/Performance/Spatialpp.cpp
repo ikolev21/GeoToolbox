@@ -1,4 +1,4 @@
-// Copyright 2024 Ivan Kolev
+// Copyright 2024-2025 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -19,14 +19,14 @@ struct SpatialppFeatureMetric
 
 	using distance_type = double;
 
-	distance_type distance_to_key(spatial::dimension_type, Feature<KeyType> const* origin, Feature<KeyType> const* key) const
+	distance_type distance_to_key(spatial::dimension_type /*rank*/, Feature<KeyType> const* origin, Feature<KeyType> const* key) const
 	{
 		return GetDistanceSquared(origin->spatialKey, key->spatialKey);
 	}
 
-	distance_type distance_to_plane(spatial::dimension_type, spatial::dimension_type dim, Feature<KeyType> const* origin, Feature<KeyType> const* key) const
+	static distance_type distance_to_plane(spatial::dimension_type /*rank*/, spatial::dimension_type dim, Feature<KeyType> const* origin, Feature<KeyType> const* key)
 	{
-		return pow(origin->spatialKey[dim] - key->spatialKey[dim], 2.0);
+		return Square(origin->spatialKey[dim] - key->spatialKey[dim]);
 	}
 };
 
@@ -37,23 +37,23 @@ struct SpatialppFeatureMetric<Box<TVector>>
 
 	using distance_type = double;
 
-	distance_type distance_to_key(spatial::dimension_type, Feature<KeyType> const* origin, Feature<KeyType> const* key) const
+	distance_type distance_to_key(spatial::dimension_type /*rank*/, Feature<KeyType> const* origin, Feature<KeyType> const* key) const
 	{
 		return GetDistanceSquared(origin->spatialKey.Min(), key->spatialKey);
 	}
 
-	distance_type distance_to_plane(spatial::dimension_type, spatial::dimension_type dim, Feature<KeyType> const* origin, Feature<KeyType> const* key) const
+	distance_type distance_to_plane(spatial::dimension_type /*rank*/, spatial::dimension_type dim, Feature<KeyType> const* origin, Feature<KeyType> const* key) const
 	{
 		if (dim >= KeyType::Dimensions)
 		{
 			dim -= KeyType::Dimensions;
 		}
 
-		auto const closest = GetClosestPointOnBox(key->spatialKey, origin->spatialKey.Min());
-		return pow(origin->spatialKey.Min()[dim] - closest[dim], 2.0);
+		auto const closest = std::clamp( origin->spatialKey[dim], key->spatialKey.Min()[dim], key->spatialKey.Max()[dim] );
+		return Square(origin->spatialKey.Min()[dim] - closest);
 		//auto const originValue = origin.spatialKey->Min()[dim];
-		//return originValue < key.spatialKey.Min()[dim] ? pow(originValue - key.spatialKey.Min()[dim], 2.0)
-		//	: originValue > key.spatialKey.Max()[dim] ? pow(originValue - key.spatialKey.Max()[dim], 2.0)
+		//return originValue < key.spatialKey.Min()[dim] ? Square(originValue - key.spatialKey.Min()[dim])
+		//	: originValue > key.spatialKey.Max()[dim] ? Square(originValue - key.spatialKey.Max()[dim])
 		//	: 0.0;
 	}
 };
@@ -74,7 +74,7 @@ int SpatialppKdtree<TSpatialKey, IsPoint>::QueryBox(IndexType const& index, BoxT
 	else
 	{
 		Feature<TSpatialKey> featureBox = { 0, box };
-		for (auto iter = overlap_region_begin(index, &featureBox, spatial::llhh_layout_tag()); iter != index.end(); ++iter)
+		for (auto iter = overlap_region_begin(index, &featureBox, spatial::llhh_layout_tag{}); iter != index.end(); ++iter)
 		{
 			++count;
 		}
