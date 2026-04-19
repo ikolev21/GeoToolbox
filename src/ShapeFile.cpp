@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -86,9 +86,29 @@ namespace GeoToolbox
 		return result;
 	}
 
-	bool ShapeFile::Write(std::filesystem::path const& filePath, Span<Vector2 const> points)
+	template <class TVector>
+	bool ShapeFile::Write_(std::filesystem::path const& filePath, Span<TVector const> points)
 	{
-		ShapeFilePtr const shapeFile{ SHPCreate(filePath.string().c_str(), SHPT_POINT) };
+		int type;
+		double const* (*getZ)(TVector const&) = [](TVector const&) -> double const*
+			{
+				return nullptr;
+			};
+		if constexpr (std::is_same_v<TVector, Vector2>)
+		{
+			type = SHPT_POINT;
+		}
+		else
+		{
+			static_assert(std::is_same_v<TVector, Vector3>);
+			type = SHPT_POINTZ;
+			getZ = [](TVector const& v) -> double const*
+				{
+					return &v[2];
+				};
+		}
+
+		ShapeFilePtr const shapeFile{ SHPCreate(filePath.string().c_str(), type) };
 		if (shapeFile == nullptr)
 		{
 			return false;
@@ -96,7 +116,7 @@ namespace GeoToolbox
 
 		for (auto const& p : points)
 		{
-			ShapeObjectPtr const obj{ SHPCreateSimpleObject(SHPT_POINT, 1, &p[0], &p[1], nullptr) };
+			ShapeObjectPtr const obj{ SHPCreateSimpleObject(type, 1, &p[0], &p[1], getZ(p)) };
 			if (obj == nullptr)
 			{
 				return false;
@@ -107,6 +127,9 @@ namespace GeoToolbox
 
 		return true;
 	}
+
+	template bool ShapeFile::Write_(std::filesystem::path const&, Span<Vector2 const>);
+	template bool ShapeFile::Write_(std::filesystem::path const&, Span<Vector3 const>);
 
 	bool ShapeFile::Write(std::filesystem::path const& filePath, Span<Box2 const> boxes)
 	{
@@ -119,14 +142,15 @@ namespace GeoToolbox
 		std::array<double, 4> x{}, y{};
 		for (auto const& box : boxes)
 		{
+			// Shapefile expects polygons to have clockwise orientation
 			x[0] = box.Min()[0];
 			y[0] = box.Min()[1];
-			x[1] = box.Max()[0];
-			y[1] = box.Min()[1];
+			x[1] = box.Min()[0];
+			y[1] = box.Max()[1];
 			x[2] = box.Max()[0];
 			y[2] = box.Max()[1];
-			x[3] = box.Min()[0];
-			y[3] = box.Max()[1];
+			x[3] = box.Max()[0];
+			y[3] = box.Min()[1];
 			ShapeObjectPtr const obj{ SHPCreateSimpleObject(SHPT_POLYGON, 4, x.data(), y.data(), nullptr) };
 			if (obj == nullptr)
 			{

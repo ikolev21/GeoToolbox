@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -29,7 +29,7 @@ namespace GeoToolbox
 {
 	constexpr string_view CommentChars = ";#";
 
-	void Config::AddKvp(std::string_view kvp, bool overwrite)
+	void Config::AddKeyValuePair(std::string_view kvp, bool overwrite)
 	{
 		auto const [key, value] = SplitKvp(kvp);
 		auto stringKey = string{ key };
@@ -39,11 +39,11 @@ namespace GeoToolbox
 		}
 	}
 
-	void Config::AddCommandLine(Span<char* const> args, bool overwrite)
+	void Config::AddCommandLine(Span<char const* const> args, bool overwrite)
 	{
 		for (auto const arg : args)
 		{
-			AddKvp(arg, overwrite);
+			AddKeyValuePair(arg, overwrite);
 		}
 	}
 
@@ -53,11 +53,35 @@ namespace GeoToolbox
 		string line;
 		while (getline(file, line))
 		{
-			AddKvp(line, overwrite);
+			AddKeyValuePair(line, overwrite);
 		}
 	}
 
-	std::string Config::GetValue(std::string const& key, std::string const& fallback)
+	void Config::RegisterKeys(std::vector<ConfigKeyDesc> descs)
+	{
+		descs_ = std::move(descs);
+	}
+
+	string Config::GenerateDefaultConfigFile() const
+	{
+		stringstream s;
+		for (auto const& desc : descs_)
+		{
+			s << "\n#";
+			if (!desc.description.empty())
+			{
+				stringstream def;
+				Output(def, desc.defaultValue);
+				s << ' ' << ReplaceFirst(desc.description, "{def}", def.str()) << '.';
+			}
+
+			s << '\n' << desc.key << "=\n";
+		}
+
+		return s.str();
+	}
+
+	std::string Config::GetString(std::string const& key, std::string const& fallback)
 	{
 		auto const location = values_.find(key);
 		if (location != values_.end())
@@ -75,9 +99,9 @@ namespace GeoToolbox
 		return {};
 	}
 
-	int Config::GetValue(std::string const& key, int fallback)
+	int Config::GetInt(std::string const& key, int fallback)
 	{
-		auto const text = GetValue(key);
+		auto const text = GetString(key, "");
 		if (!text.empty())
 		{
 			std::from_chars(text.data(), text.data() + text.length(), fallback);

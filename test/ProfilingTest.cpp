@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -19,7 +19,7 @@ using namespace std;
 TEST_CASE("Timing")
 {
 	using namespace GeoToolbox;
-	Timings timings{ 100'000 };
+	Timings timings{ 100 };
 
 	SECTION("Multiple repeats of a single action")
 	{
@@ -30,7 +30,7 @@ TEST_CASE("Timing")
 			sinX = timings.Record("sin", 1'000'000, [&x] { return sin(DoNotOptimize(x)); });
 		}
 
-		cout << timings.Print();
+		//cout << timings.Print();
 
 		REQUIRE(sinX > 0);
 		RELEASE_ONLY(REQUIRE(timings.TotalRunningTime() >= timings.MinimumRunningTime()));
@@ -59,7 +59,7 @@ TEST_CASE("Timing")
 				});
 		}
 
-		cout << timings.Print();
+		//cout << timings.Print();
 
 		REQUIRE(n == 1);
 		RELEASE_ONLY(REQUIRE(timings.TotalRunningTime() >= timings.MinimumRunningTime()));
@@ -288,6 +288,23 @@ TEST_CASE("Concat")
 		++count;
 		REQUIRE(x >= 1);
 		REQUIRE(x < 5);
+	}
+
+	REQUIRE(count == 4);
+
+	count = 0;
+	v.clear();
+	for (auto x : Concat(v, v))
+	{
+		count += x;
+	}
+
+	REQUIRE(count == 0);
+
+	count = 0;
+	for (auto x : Concat(v, a2))
+	{
+		count += x;
 	}
 
 	REQUIRE(count == 4);

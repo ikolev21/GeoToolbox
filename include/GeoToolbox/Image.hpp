@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -47,6 +47,7 @@ namespace GeoToolbox
 			return data_;
 		}
 
+		// Save to PNG file, filename should have .png extension
 		void Encode(std::string const& filename) const;
 
 		void Fill(Color);

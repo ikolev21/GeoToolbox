@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <!--
-Copyright 2024-2025 Ivan Kolev
+Copyright 2024-2026 Ivan Kolev
 
 Distributed under the Boost Software License, Version 1.0.
 (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -21,6 +21,7 @@ Distributed under the Boost Software License, Version 1.0.
   </Type>
 
   <Type Name="std::array&lt;*,2&gt;">
+    <Intrinsic Name="size" Expression="2" />
     <DisplayString>[ {_Elems[0],g}, {_Elems[1],g} ]</DisplayString>
     <Expand>
       <ArrayItems>
@@ -30,20 +31,45 @@ Distributed under the Boost Software License, Version 1.0.
     </Expand>
   </Type>
 
-  <Type Name="GeoToolbox::Box&lt;*,*&gt;">
-    <Intrinsic Name="min" Expression="($T1*)ends_._Elems[0]._Elems" />
-    <Intrinsic Name="max" Expression="($T1*)ends_._Elems[1]._Elems" />
+  <Type Name="std::array&lt;*,3&gt;">
+    <Intrinsic Name="size" Expression="3" />
+    <DisplayString>[ {_Elems[0],g}, {_Elems[1],g}, {_Elems[2],g} ]</DisplayString>
+    <Expand>
+      <ArrayItems>
+        <Size>3</Size>
+        <ValuePointer>_Elems</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <Type Name="GeoToolbox::Box&lt;*&gt;">
+    <Intrinsic Name="min" Expression="&amp;ends_._Elems[0]._Elems[0]" />
+    <Intrinsic Name="max" Expression="&amp;ends_._Elems[1]._Elems[0]" />
     <DisplayString Condition="min()[0] != min()[0]">&lt;empty&gt;</DisplayString>
     <DisplayString Condition="min()[0] == min()[0]">{ends_._Elems[0],g} - {ends_._Elems[1],g}</DisplayString>
     <Expand>
       <Item Name="Min">ends_._Elems[0],g</Item>
       <Item Name="Max">ends_._Elems[1],g</Item>
+      <Item Name="Width">max()[0] - min()[0],g</Item>
+      <Item Name="Length">max()[1] - min()[1],g</Item>
+      <Item Name="Height" Condition=" ends_._Elems[0].size() == 3">max()[2] - min()[2],g</Item>
       <Item Name="CenterX">( max()[0] + min()[0] ) / 2,g</Item>
       <Item Name="CenterY">( max()[1] + min()[1] ) / 2,g</Item>
-      <Item Name="Width">max()[0] - min()[0],g</Item>
-      <Item Name="Height">max()[1] - min()[1],g</Item>
       <Item Name="Area">( max()[1] - min()[1] ) * ( max()[0] - min()[0] ),g</Item>
     </Expand>
+  </Type>
+
+  <Type Name="AggregateStats&lt;*&gt;">
+    <DisplayString>[{count_}] {minimum_}   {count_ > 0 ? sum_ / double( count_ ) : 0,g}   {maximum_}</DisplayString>
+  </Type>
+
+  <Type Name="nanoflann::KDTreeBaseClass&lt;*,*,*,*,*&gt;::Node">
+    <Intrinsic Name="isLeaf" Expression="child1 == 0 &amp;&amp; child2 == 0" />
+    <DisplayString Condition="isLeaf()">Leaf {node_type.lr.left} - {node_type.lr.right} [{node_type.lr.right - node_type.lr.left}]</DisplayString>
+    <DisplayString Condition="!isLeaf()">Split at {(int)node_type.sub.divfeat} {(int)node_type.sub.divlow} - {(int)node_type.sub.divhigh}</DisplayString>
+    <!--<Expand>
+      <Item Name="Parent">parent</Item>
+    </Expand>-->
   </Type>
 
 </AutoVisualizer>

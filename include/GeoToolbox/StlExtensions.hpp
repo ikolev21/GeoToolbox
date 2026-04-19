@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -55,7 +55,7 @@ namespace GeoToolbox
 	// Algorithm wrappers
 
 	template <typename T>
-	T Square(T x)
+	[[nodiscard]] constexpr T Square(T x) noexcept
 	{
 		return x * x;
 	}
@@ -68,6 +68,12 @@ namespace GeoToolbox
 		return std::find(begin(container), end(container), value);
 	}
 
+	template <class TContainer, class TPredicate>
+	[[nodiscard]] auto FindIf(TContainer& container, TPredicate&& predicate) -> decltype(container.begin())
+	{
+		return std::find_if(container.begin(), container.end(), std::forward<TPredicate>(predicate));
+	}
+
 	template <class TContainer, typename T>
 	[[nodiscard]] constexpr bool Contains(TContainer const& container, T const& value)
 	{
@@ -76,7 +82,7 @@ namespace GeoToolbox
 	}
 
 	template <class TContainer, class TPredicate>
-	[[nodiscard]] constexpr bool AllOf(TContainer& container, TPredicate predicate)
+	[[nodiscard]] constexpr bool AllOf(TContainer const& container, TPredicate predicate)
 	{
 		// all_of is constexpr only in C++20
 		//return std::all_of(container.begin(), container.end(), predicate);
@@ -92,7 +98,7 @@ namespace GeoToolbox
 	}
 
 	template <class TContainerA, class TContainerB, class TPredicate>
-	[[nodiscard]] constexpr bool AllOf(TContainerA& containerA, TContainerB& containerB, TPredicate predicate)
+	[[nodiscard]] constexpr bool AllOf(TContainerA const& containerA, TContainerB const& containerB, TPredicate predicate)
 	{
 		using std::begin;
 		using std::end;
@@ -267,6 +273,58 @@ namespace GeoToolbox
 		return EndsWithImpl<wchar_t, TTraits<wchar_t>>(text, suffix);
 	}
 
+	template <typename C>
+	std::basic_string_view<C> TrimImpl(std::basic_string_view<C> text, std::basic_string_view<C> delimiters)
+	{
+		auto length = text.length();
+		auto delimitersCount = delimiters.length();
+		auto right = length;
+		size_t left;
+		for (; right > 0 && std::char_traits<C>::find(delimiters.data(), delimitersCount, text[right - 1]); --right)
+		{
+		}
+
+		for (left = 0; left < right && std::char_traits<C>::find(delimiters.data(), delimitersCount, text[left]) != nullptr; ++left)
+		{
+		}
+
+		return std::basic_string_view<C>(text.data() + left, right - left);
+	}
+
+	inline std::string_view Trim(std::string_view text, std::string_view delimiters = " ")
+	{
+		return TrimImpl<char>(text, delimiters);
+	}
+
+	inline std::wstring_view Trim(std::wstring_view text, std::wstring_view delimiters = L" ")
+	{
+		return TrimImpl<wchar_t>(text, delimiters);
+	}
+
+
+	template<typename C>
+	std::basic_string<C> ReplaceFirstImpl(std::basic_string_view<C> text, std::basic_string_view<C> from, std::basic_string_view<C> to)
+	{
+		ASSERT(!from.empty());
+		std::basic_string<C> result{ text };
+		auto const position = result.find(from);
+		if (position != std::basic_string<C>::npos)
+		{
+			result.replace(position, from.length(), to);
+		}
+
+		return result;
+	}
+
+	inline std::string ReplaceFirst(std::string_view text, std::string_view from, std::string_view to)
+	{
+		return ReplaceFirstImpl<char>(text, from, to);
+	}
+
+	inline std::wstring ReplaceFirst(std::wstring_view text, std::wstring_view from, std::wstring_view to)
+	{
+		return ReplaceFirstImpl<wchar_t>(text, from, to);
+	}
 
 	template <class TContainer, typename T>
 	[[nodiscard]] constexpr auto ParallelFind(TContainer const& container, T const& value)
@@ -593,7 +651,7 @@ namespace GeoToolbox
 
 		[[nodiscard]] std::int64_t GetInt() const
 		{
-			DEBUG_ASSERT(IsInt(), std::invalid_argument);
+			DEBUG_ASSERT(IsInt());
 			return storage_ / 2;
 		}
 
@@ -605,13 +663,13 @@ namespace GeoToolbox
 
 		[[nodiscard]] T* operator->() const
 		{
-			DEBUG_ASSERT(*this != nullptr, std::invalid_argument);
+			DEBUG_ASSERT(*this != nullptr);
 			return get();
 		}
 
 		[[nodiscard]] T& operator*() const
 		{
-			DEBUG_ASSERT(*this != nullptr, std::invalid_argument);
+			DEBUG_ASSERT(*this != nullptr);
 			return *get();
 		}
 
@@ -624,7 +682,7 @@ namespace GeoToolbox
 		PointerOrInt& operator=(std::int64_t value)
 		{
 			storage_ = value * 2 + 1;
-			DEBUG_ASSERT(value >= 0 == storage_ >= 0, std::overflow_error);
+			DEBUG_ASSERT(value >= 0 == storage_ >= 0);
 			return *this;
 		}
 

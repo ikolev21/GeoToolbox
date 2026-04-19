@@ -1,18 +1,28 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
 
+#include "GeoToolbox/Asserts.hpp"
 #include "GeoToolbox/StlExtensions.hpp"
 
 #include <chrono>
+#include <iomanip>
 #include <sstream>
 #include <unordered_map>
 
+#define TRACK_ALLOCATED_MEMORY 01
+
+void* TrackedMalloc(size_t size);
+void TrackedFree(void* block);
+
 namespace GeoToolbox
 {
+	inline std::atomic<size_t> TotalAllocatedSize;
+
+
 	template <typename T>
 	T DoNotOptimize(T value)
 	{
@@ -22,7 +32,7 @@ namespace GeoToolbox
 
 	class Stopwatch
 	{
-		using TimePoint = std::chrono::time_point<std::chrono::high_resolution_clock>;
+		using TimePoint = std::chrono::time_point<std::chrono::steady_clock>;
 
 		TimePoint start_;
 		bool isRunning_ = false;
@@ -44,7 +54,7 @@ namespace GeoToolbox
 
 		void Start() noexcept
 		{
-			start_ = std::chrono::high_resolution_clock::now();
+			start_ = std::chrono::steady_clock::now();
 			isRunning_ = true;
 		}
 
@@ -56,14 +66,91 @@ namespace GeoToolbox
 		[[nodiscard]] int64_t ElapsedMicroseconds() const noexcept
 		{
 			using namespace std::chrono;
-			return isRunning_ ? int64_t(duration_cast<microseconds>(high_resolution_clock::now() - start_).count()) : 0;
+			return isRunning_ ? int64_t(duration_cast<microseconds>(steady_clock::now() - start_).count()) : 0;
 		}
 
 		[[nodiscard]] int ElapsedMilliseconds() const noexcept
 		{
 			using namespace std::chrono;
-			return isRunning_ ? int(duration_cast<milliseconds>(high_resolution_clock::now() - start_).count()) : 0;
+			return isRunning_ ? int(duration_cast<milliseconds>(steady_clock::now() - start_).count()) : 0;
 		}
+	};
+
+
+	template <typename T>
+	class AggregateStats
+	{
+	public:
+		AggregateStats() noexcept = default;
+
+		void AddValue( T value ) noexcept
+		{
+			minimum_ = std::min( minimum_, value );
+			maximum_ = std::max( maximum_, value );
+			++count_;
+			sum_ += value;
+		}
+
+		[[nodiscard]] bool IsEmpty() const noexcept
+		{
+			return count_ == 0;
+		}
+
+		[[nodiscard]] int Count() const noexcept
+		{
+			return count_;
+		}
+
+		[[nodiscard]] T Minimum() const noexcept
+		{
+			return minimum_;
+		}
+
+		[[nodiscard]] T Maximum() const noexcept
+		{
+			return maximum_;
+		}
+
+		[[nodiscard]] T Sum() const noexcept
+		{
+			return sum_;
+		}
+
+		[[nodiscard]] double Average() const noexcept
+		{
+			return count_ > 0 ? sum_ / double( count_ ) : 0;
+		}
+
+		[[nodiscard]] bool IsConstant() const noexcept
+		{
+			return count_ > 0 && minimum_ == maximum_;
+		}
+
+		[[nodiscard]] bool IsConstant( T x ) const noexcept
+		{
+			return count_ > 0 && x == minimum_ && x == maximum_;
+		}
+
+
+		void clear() noexcept
+		{
+			count_ = 0;
+			sum_ = 0;
+		}
+
+		friend std::ostream& operator<<( std::ostream& stream, AggregateStats const& stats )
+		{
+			stream << '[' << stats.Count() << "] " << std::fixed << std::setprecision( 1 ) << stats.Minimum() << "  " << stats.Average() << "  " << stats.Maximum();
+			//stream << stats.minimum_ << '/' << stats.Average() << '/' << stats.maximum_ << " [" << stats.count_;
+			//stream << '/' << stats.sum_ << ']';
+			return stream;
+		}
+
+	private:
+		int count_ = 0;
+		T minimum_ = std::numeric_limits<T>::max();
+		T maximum_ = std::numeric_limits<T>::lowest();
+		T sum_ = 0;
 	};
 
 
@@ -77,7 +164,7 @@ namespace GeoToolbox
 
 	public:
 
-		ProfileMemoryResource(memory_resource* upstream = nullptr)
+		explicit ProfileMemoryResource(memory_resource* upstream = nullptr)
 			: upstream_{ upstream != nullptr ? upstream : std::pmr::get_default_resource() }
 		{
 		}
@@ -160,9 +247,14 @@ namespace GeoToolbox
 			*stats += size * count;
 		}
 
-		void Remove(std::size_t size, std::size_t count = 1) const
+		void Remove(std::size_t size, std::size_t count = 1) const noexcept
 		{
 			*stats -= size * count;
+		}
+
+		[[nodiscard]] std::int64_t GetTotalAllocated() const
+		{
+			return stats->load();
 		}
 	};
 
@@ -224,7 +316,7 @@ namespace GeoToolbox
 			return TAllocator::allocate(count);
 		}
 
-		void deallocate(pointer ptr, size_type count) noexcept
+		void deallocate(pointer ptr, size_type count)
 		{
 			stats_.Remove(count, sizeof(value_type));
 			TAllocator::deallocate(ptr, count);
@@ -253,6 +345,45 @@ namespace GeoToolbox
 		}
 	};
 
+	// This is needed for profiling structures, whose memory usage should not be included when memory is tracked
+	template<typename T>
+	struct MallocAllocator : std::allocator<T>
+	{
+		using value_type = T;
+		using size_type = size_t;
+		using difference_type = ptrdiff_t;
+
+		template<typename U>
+		struct rebind
+		{
+			using other = MallocAllocator<U>;
+		};
+
+		MallocAllocator() = default;
+
+		template<typename U>
+		explicit MallocAllocator( MallocAllocator<U> const& u )
+			: std::allocator<T>(u)
+		{
+		}
+
+		T* allocate( size_t size, void const* /*hint*/ = nullptr )
+		{
+			auto const result = std::malloc( size * sizeof( T ) );
+			if ( result == nullptr )
+			{
+				throw std::bad_alloc();
+			}
+
+			return static_cast<T*>( result );
+		}
+
+		void deallocate( T* p, size_type )
+		{
+			std::free( p );
+		}
+	};
+
 
 	struct MeasureResult
 	{
@@ -277,6 +408,16 @@ namespace GeoToolbox
 
 	static constexpr auto Kilo = 1'000;
 
+	inline std::string PrintMilliSeconds(double ms)
+	{
+		if (ms < Kilo)
+		{
+			return std::to_string(ms) + "ms";
+		}
+
+		return std::to_string(ms / Kilo) + "s";
+	}
+
 	inline std::string PrintMicroSeconds(double us)
 	{
 		if (us < Kilo)
@@ -284,12 +425,7 @@ namespace GeoToolbox
 			return std::to_string(us) + "us";
 		}
 
-		if (us < Kilo * Kilo)
-		{
-			return std::to_string(us / Kilo) + "ms";
-		}
-
-		return std::to_string(us / (Kilo * Kilo)) + "s";
+		return PrintMilliSeconds(us / Kilo);
 	}
 
 	inline std::string PrintMicroSeconds(int64_t us)
@@ -297,7 +433,7 @@ namespace GeoToolbox
 		return PrintMicroSeconds(double(us));
 	}
 
-
+	//! Runs a set of named actions for several iterations until none of the actions improves its time and records the best time of each action
 	class Timings
 	{
 	public:
@@ -309,13 +445,16 @@ namespace GeoToolbox
 			int64_t iterationCount = 0;
 			int64_t memoryDelta = std::numeric_limits<int64_t>::max();
 			bool failed = false;
+			std::shared_ptr<void> extra;
 		};
 
-		using ContainerType = std::unordered_map<std::string, ActionStats>;
+		using ContainerType = std::unordered_map<char const*, ActionStats, std::hash<char const*>, std::equal_to<char const*>, MallocAllocator<std::pair<char const* const, ActionStats>>>;
 
 	private:
 
 		int64_t const minimumRunningTimeUs_;
+
+		int const stopWhenNotImprovedNTimes_;
 
 		int const maximumIterationCount_;
 
@@ -331,69 +470,23 @@ namespace GeoToolbox
 
 		int iterationCount_ = 0;
 
+		bool anyImproved_ = false;
 
-		class Recorder final
-		{
-			Timings* owner_ = nullptr;
-			std::string actionName_;
-			int repeats_ = 1;
-			SharedAllocatedSize allocStats_;
-			int64_t initialMemory_ = -1;
-			ActionStats** stats_ = nullptr;
-			Stopwatch actionTimer_{ false };
-
-		public:
-			Recorder(Timings& owner, std::string actionName, int repeats = 1, SharedAllocatedSize allocStats = nullptr, ActionStats** stats = nullptr)
-				: owner_{ &owner }
-				, actionName_{ std::move(actionName) }
-				, repeats_{ repeats }
-				, allocStats_{ std::move(allocStats) }
-				, stats_(stats)
-			{
-				if (allocStats_ != nullptr)
-				{
-					initialMemory_ = allocStats_->load();
-				}
-
-				actionTimer_.Start();
-			}
-
-			Recorder(Recorder const&) = delete;
-			Recorder(Recorder&&) = default;
-			Recorder& operator=(Recorder const&) = delete;
-			Recorder& operator=(Recorder&&) = default;
-
-			~Recorder() noexcept
-			{
-				auto const us = actionTimer_.ElapsedMicroseconds();
-				try
-				{
-					auto& stats = owner_->AddSample(actionName_, us, repeats_, allocStats_ != nullptr ? allocStats_->load() - initialMemory_ : 0);
-					if (stats_ != nullptr)
-					{
-						*stats_ = &stats;
-					}
-				}
-				catch (...)
-				{
-					if (stats_ != nullptr)
-					{
-						*stats_ = nullptr;
-					}
-				}
-			}
-		};
+		int notImprovedRuns_ = 0;
 
 	public:
+
+		static constexpr int64_t MsPerSecond = 1'000;
 
 		static constexpr int64_t UsPerSecond = 1'000'000;
 
 		static constexpr auto MaximumIterationCount = 10'000;
 
 
-		explicit Timings(int64_t minimumRunningTimeUs = 0, int maximumIterationCount = SelectDebugRelease(1, MaximumIterationCount))
-			: minimumRunningTimeUs_(minimumRunningTimeUs > 0 ? minimumRunningTimeUs : UsPerSecond)
-			, maximumIterationCount_(maximumIterationCount)
+		explicit Timings(int64_t minimumRunningTimeMs = 0, int stopWhenNotImprovedNTimes = 0, int maximumIterationCount = 0)
+			: minimumRunningTimeUs_{ minimumRunningTimeMs > 0 ? 1000 * minimumRunningTimeMs : UsPerSecond }
+			, stopWhenNotImprovedNTimes_{ stopWhenNotImprovedNTimes }
+			, maximumIterationCount_{ SelectDebugRelease(1, maximumIterationCount > 0 ? maximumIterationCount : MaximumIterationCount) }
 		{
 		}
 
@@ -403,13 +496,19 @@ namespace GeoToolbox
 		Timings& operator=(Timings const&) = delete;
 		Timings& operator=(Timings&&) = delete;
 
-		ActionStats& AddSample(std::string const& actionName, int64_t runTime, int repeats = 1, int64_t memoryDelta = 0)
+		ActionStats& AddSample(char const* actionName, int64_t runTime, int repeats = 1, int64_t memoryDelta = 0)
 		{
 			auto& action = actions_[actionName];
 			action.iterationCount += repeats;
 			action.totalTime += runTime;
-			action.bestTime = std::min(action.bestTime, double(runTime) / repeats);
-			action.memoryDelta = std::min(action.memoryDelta, memoryDelta / repeats);
+			auto const avgTime = double(runTime) / repeats;
+			if (avgTime < action.bestTime)
+			{
+				action.bestTime = avgTime;
+				anyImproved_ = true;
+			}
+
+			action.memoryDelta = std::min(action.memoryDelta, memoryDelta);
 			return action;
 		}
 
@@ -443,35 +542,61 @@ namespace GeoToolbox
 			return iterationCount_;
 		}
 
-		Recorder BeginRecordedScope(std::string actionName)
+		template <class F>
+		std::invoke_result_t<F> Record(char const* actionName, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedUs = nullptr)
 		{
-			return Recorder{ *this, std::move(actionName) };
+			return Record(actionName, 1, nullptr, std::move(action), statsPtr, elapsedUs);
 		}
 
 		template <class F>
-		std::invoke_result_t<F> Record(std::string actionName, F action, ActionStats** stats = nullptr)
+		std::invoke_result_t<F> Record(char const* actionName, int repeats, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedUs = nullptr)
 		{
-			[[maybe_unused]] Recorder const recorder{ *this, std::move(actionName), 1, nullptr, stats };
-			return action();
+			return Record(actionName, repeats, nullptr, std::move(action), statsPtr, elapsedUs);
 		}
 
 		template <class F>
-		std::invoke_result_t<F> Record(std::string actionName, SharedAllocatedSize const& allocatorStats, F action, ActionStats** stats = nullptr)
+		std::invoke_result_t<F> Record(char const* actionName, SharedAllocatedSize const& allocatorStats, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedUs = nullptr)
 		{
-			[[maybe_unused]] Recorder const recorder{ *this, std::move(actionName), 1, allocatorStats, stats };
-			return action();
+			return Record(actionName, 1, allocatorStats, std::move(action), statsPtr, elapsedUs);
 		}
 
 		template <class F>
-		std::invoke_result_t<F> Record(std::string actionName, int repeats, F action, ActionStats** stats = nullptr)
+		std::invoke_result_t<F> Record(char const* actionName, int repeats, SharedAllocatedSize const& allocatorStats, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedUs = nullptr)
 		{
-			[[maybe_unused]] Recorder const recorder{ *this, std::move(actionName), repeats, nullptr, stats };
+			auto initialMemory = allocatorStats != nullptr ? allocatorStats->load() : int64_t(TotalAllocatedSize.load());
+			Stopwatch actionTimer;
+
 			for (auto i = 0; i < repeats - 1; ++i)
 			{
 				action();
 			}
 
-			return action();
+			[[maybe_unused]] std::conditional_t<std::is_void_v<std::invoke_result_t<F>>, int, std::invoke_result_t<F>> result;
+			if constexpr (std::is_void_v<std::invoke_result_t<F>>)
+			{
+				action();
+			}
+			else
+			{
+				result = action();
+			}
+
+			auto const us = actionTimer.ElapsedMicroseconds();
+			if (elapsedUs != nullptr)
+			{
+				*elapsedUs = us;
+			}
+
+			auto& stats = AddSample(actionName, us, repeats, (allocatorStats != nullptr ? allocatorStats->load() : int64_t(TotalAllocatedSize.load())) - initialMemory);
+			if (statsPtr != nullptr)
+			{
+				*statsPtr = &stats;
+			}
+
+			if constexpr (!std::is_void_v<std::invoke_result_t<F>>)
+			{
+				return result;
+			}
 		}
 
 		[[nodiscard]] bool NextIteration() noexcept
@@ -486,9 +611,23 @@ namespace GeoToolbox
 			}
 
 			auto const time = timer_.ElapsedMicroseconds() - iterationStartTime_;
-			bestIterationTime_ = std::min(bestIterationTime_, time);
+			if (time < bestIterationTime_)
+			{
+				bestIterationTime_ = time;
+				anyImproved_ = true;
+			}
 
-			if (iterationCount_ >= maximumIterationCount_ || timer_.ElapsedMicroseconds() > minimumRunningTimeUs_)
+			if (anyImproved_)
+			{
+				anyImproved_ = false;
+				notImprovedRuns_ = 0;
+			}
+			else
+			{
+				++notImprovedRuns_;
+			}
+
+			if (iterationCount_ >= maximumIterationCount_ || timer_.ElapsedMicroseconds() > minimumRunningTimeUs_ && (stopWhenNotImprovedNTimes_ <= 0 || notImprovedRuns_ >= stopWhenNotImprovedNTimes_))
 			{
 				totalRunningTime_ = timer_.ElapsedMicroseconds();
 				return false;

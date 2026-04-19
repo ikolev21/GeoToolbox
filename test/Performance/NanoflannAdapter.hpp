@@ -1,48 +1,103 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
 
+#include "SpatialIndexWrapper.hpp"
+
 #ifndef ENABLE_NANOFLANN
 
 template <typename TSpatialKey>
-struct NanoflannStaticKdtree
+struct NanoflannStaticKdtree : SpatialIndexWrapper<TSpatialKey>
 {
-	using IndexType = void;
 };
 
 #else
 
 #pragma GCC system_header
 
-#include "GeoToolbox/SpatialTools.hpp"
+#include "TestTools.hpp"
 
 #ifdef _MSC_VER
-#	pragma warning( disable : 4127 ) // conditional expression is constant
-#	pragma warning( disable : 4267 ) // '=': conversion from 'size_t' to 'int', possible loss of data
+#	pragma warning( disable : 4324 ) // Node: structure was padded due to alignment specifier
 #endif
 
+#if defined( _MSC_VER ) && !defined( __clang__ )
+#	define NANOFLANN_NODE_ALIGNMENT 8
+#else
+// GCC and Clang generate code that causes unaligned access exception in nanoflann with points of type array<float,3>, if alignment is set to more than 8 bytes
+#	define NANOFLANN_NODE_ALIGNMENT 8
+#endif
+
+// Nanoflann uses malloc/free (in addition to new/delete), need to hook these to track memory usage
+#define malloc TrackedMalloc
+#define free TrackedFree
 #include <nanoflann.hpp>
+#undef malloc
+#undef free
+
+#include <queue>
 
 #ifdef _MSC_VER
-#	pragma warning( default : 4127 )
-#	pragma warning( default : 4267 )
+#	pragma warning( default : 4324 )
 #endif
 
-struct NanoflannStaticKdtreeBase
+template <typename TSpatialKey>
+struct NanoflannStaticKdtreeBase : SpatialIndexWrapper<TSpatialKey>
 {
-	static constexpr std::string_view Name = "nanoflann " MAKE_STRING(NANOFLANN_VERSION) " Static";
-
-	static constexpr auto IsDynamic = false;
+	[[nodiscard]] std::string_view Name() const override
+	{
+		return "nanoflann " MAKE_STRING(NANOFLANN_VERSION) " Align " MAKE_STRING(NANOFLANN_NODE_ALIGNMENT);
+	}
 
 	// Parallel build does run faster, but only in rare cases
 	static constexpr auto MaxThreadCount = 1; // 8;
+
+	template <class TreeType>
+	static std::string GetTreeStats(TreeType const& tree)
+	{
+		using Node = typename TreeType::Node;
+		GeoToolbox::AggregateStats<int> elementsPerNode;
+		auto maxHeight = 1;
+		std::queue<std::pair<Node*, int>> queue;
+		queue.emplace(tree.root_node_, 1);
+		auto nodeCount = 0;
+
+		while (!queue.empty())
+		{
+			auto const [node, height] = queue.front();
+			maxHeight = std::max(maxHeight, height);
+			queue.pop();
+			++nodeCount;
+			if (node->child1 == nullptr && node->child2 == nullptr)
+			{
+				elementsPerNode.AddValue(int(node->node_type.lr.right - node->node_type.lr.left));
+			}
+			else
+			{
+				if (node->child1 != nullptr)
+				{
+					queue.emplace(node->child1, height + 1);
+				}
+
+				if (node->child2 != nullptr)
+				{
+					queue.emplace(node->child2, height + 1);
+				}
+			}
+		}
+
+		std::ostringstream stream;
+		stream << "Nodes: " << nodeCount << " Elems/Leaf: " << elementsPerNode;
+		stream << " Height: " << maxHeight;
+		return stream.str();
+	}
 };
 
 template <typename TVector>
-struct NanoflannStaticKdtree : NanoflannStaticKdtreeBase
+struct NanoflannStaticKdtree final : NanoflannStaticKdtreeBase<TVector>
 {
 	using Point = TVector;
 
@@ -90,7 +145,30 @@ struct NanoflannStaticKdtree : NanoflannStaticKdtreeBase
 	};
 
 	using TreeType = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<ScalarType, Data, ScalarType, int>, Data, Dimensions, int>;
-	using IndexType = std::pair<std::unique_ptr<Data>, std::unique_ptr<TreeType>>;
+	using IndexType = std::pair<Data, std::unique_ptr<TreeType>>;
+
+	[[nodiscard]] std::string GetIndexStats(std::shared_ptr<void> const& indexPtr) const override
+	{
+		auto& index = *static_cast<IndexType const*>(indexPtr.get());
+
+		return NanoflannStaticKdtreeBase<TVector>::GetTreeStats(*index.second);
+	}
+
+	static void Convert(BoxType const& queryBox, typename TreeType::BoundingBox& treeBox)
+	{
+		for (auto i = 0; i < int(Dimensions); ++i)
+		{
+			treeBox[i].low = queryBox.Min()[i];
+			treeBox[i].high = queryBox.Max()[i];
+		}
+	}
+
+	static auto Convert(BoxType const& queryBox) -> typename TreeType::BoundingBox
+	{
+		typename TreeType::BoundingBox result;
+		Convert(queryBox, result);
+		return result;
+	}
 
 	static bool Overlap(typename TreeType::BoundingBox const& treeBox, BoxType const& queryBox)
 	{
@@ -106,21 +184,52 @@ struct NanoflannStaticKdtree : NanoflannStaticKdtreeBase
 		return true;
 	}
 
-	static IndexType Load(Dataset<Point> const& dataset, GeoToolbox::SharedAllocatedSize const&)
+	[[nodiscard]] std::shared_ptr<void> Load(Dataset<Point> const& dataset) const override
 	{
-		auto data = std::make_unique<Data>();
-		data->dataset = &dataset;
-		auto const dataPtr = data.get();
-		auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(GeoToolbox::MaxElementsPerNode, nanoflann::KDTreeSingleIndexAdaptorFlags::None, MaxThreadCount);
-		return { std::move(data), std::make_unique<TreeType>(int(Dimensions), *dataPtr, params) };
+		auto result = std::make_shared<IndexType>();
+		result->first.dataset = &dataset;
+		auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(GeoToolbox::MaxElementsPerNode, nanoflann::KDTreeSingleIndexAdaptorFlags::None, NanoflannStaticKdtreeBase<TVector>::MaxThreadCount);
+		result->second = std::make_unique<TreeType>(int(Dimensions), result->first, params);
+		return result;
 	}
 
-	static int QueryBox(IndexType const& index, BoxType const& queryBox)
+	struct QueryBoxResultSet
 	{
-		return !Overlap(index.second->root_bbox_, queryBox) ? 0 : BoxSearchLevel(*index.first->dataset, index.second->root_node_, queryBox);
+		std::vector<int> indices;
+
+		void init() { clear(); }
+		void clear() { indices.clear(); }
+
+		size_t size() const noexcept { return indices.size(); }
+		bool empty() const noexcept { return indices.empty(); }
+		bool full() const noexcept { return true; }
+
+		bool addPoint(ScalarType /*distance*/, int index)
+		{
+			indices.push_back(index);
+			return true;
+		}
+
+		ScalarType worstDist() const noexcept { return std::numeric_limits<ScalarType>::max(); }
+
+		//void sort() { std::sort(m_indices_dists.begin(), m_indices_dists.end(), IndexDist_Sorter()); }
+	};
+
+
+	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
+	{
+		auto& index = *static_cast<IndexType const*>(indexPtr.get());
+
+#if 0
+		// For some reason findWithinBox() is 2-3 times slower than BoxSearchLevel()
+		QueryBoxResultSet resultSet;
+		return int(index.second->findWithinBox(resultSet, Convert(queryBox)));
+#else
+		return !Overlap(index.second->root_bbox_, queryBox) ? 0 : BoxSearchLevel(*index.second, *index.first.dataset, index.second->root_node_, queryBox); 
+#endif
 	}
 
-	static int BoxSearchLevel(Dataset<Point> const& dataset, typename TreeType::Node* node, BoxType const& queryBox)
+	static int BoxSearchLevel(TreeType const& tree, Dataset<Point> const& dataset, typename TreeType::Node* node, BoxType const& queryBox)
 	{
 		auto resultCount = 0;
 
@@ -128,10 +237,12 @@ struct NanoflannStaticKdtree : NanoflannStaticKdtreeBase
 		{
 			if (node->child1 == nullptr && node->child2 == nullptr)
 			{
+				GeoToolbox::AddQueryStats_VisitedNodesCount();
+
 				for (auto i = node->node_type.lr.left; i < node->node_type.lr.right; ++i)
 				{
-					GeoToolbox::AddQueryStats_ObjectOverlapsCount();
-					if (GeoToolbox::Overlap<Point>(queryBox, dataset.GetData()[i].spatialKey))
+					GeoToolbox::AddQueryStats_ObjectTestsCount();
+					if (GeoToolbox::Overlap<Point>(queryBox, dataset.GetData()[tree.vAcc_[i]].spatialKey))
 					{
 						++resultCount;
 					}
@@ -142,16 +253,18 @@ struct NanoflannStaticKdtree : NanoflannStaticKdtreeBase
 
 			auto const dimensionIndex = node->node_type.sub.divfeat;
 			typename TreeType::Node* nextNode = nullptr;
+			GeoToolbox::AddQueryStats_ScalarComparisonsCount();
 			if (node->child1 != nullptr && queryBox.Min()[dimensionIndex] <= node->node_type.sub.divlow)
 			{
 				nextNode = node->child1;
 			}
 
+			GeoToolbox::AddQueryStats_ScalarComparisonsCount();
 			if (node->child2 != nullptr && queryBox.Max()[dimensionIndex] >= node->node_type.sub.divhigh)
 			{
 				if (nextNode != nullptr)
 				{
-					resultCount += BoxSearchLevel(dataset, node->child2, queryBox);
+					resultCount += BoxSearchLevel(tree, dataset, node->child2, queryBox);
 				}
 				else
 				{
@@ -165,19 +278,23 @@ struct NanoflannStaticKdtree : NanoflannStaticKdtreeBase
 		return resultCount;
 	}
 
-	static double QueryNearest(IndexType const& index, TVector const& location, int nearestCount)
+	[[nodiscard]] double QueryNearest(std::shared_ptr<void> const& indexPtr, TVector const& location, int nearestCount) const override
 	{
+		auto& index = *static_cast<IndexType const*>(indexPtr.get());
+
 		std::vector nearestIndices(nearestCount, 0);
 		std::vector nearestDistances(nearestCount, ScalarType{ 0 });
 		index.second->knnSearch(location.data(), nearestCount, nearestIndices.data(), nearestDistances.data());
-		return GeoToolbox::Accumulate(nearestDistances);
+		return GeoToolbox::Accumulate(nearestDistances, 0.0, [](double a, ScalarType d) { return a + d; });
 	}
 };
 
 template <typename TVector>
-struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBase
+struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> final : NanoflannStaticKdtreeBase<GeoToolbox::Box<TVector>>
 {
 	static constexpr auto Dimensions = GeoToolbox::VectorTraits<TVector>::Dimensions;
+
+	using BaseType = NanoflannStaticKdtreeBase<GeoToolbox::Box<TVector>>;
 
 	using ScalarType = typename GeoToolbox::VectorTraits<TVector>::ScalarType;
 
@@ -200,7 +317,7 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBa
 		{
 			DEBUG_ASSERT(dim < Dimensions * 2);
 			auto const& feature = dataset->GetData()[index];
-			return feature.spatialKey[int(dim) / 2][dim % Dimensions];
+			return feature.spatialKey[int(dim) / Dimensions][dim % Dimensions];
 		}
 
 		template <class BBOX>
@@ -211,23 +328,32 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBa
 	};
 
 	using TreeType = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<ScalarType, Data, ScalarType, int>, Data, Dimensions * 2, int>;
-	using IndexType = std::pair<std::unique_ptr<Data>, std::unique_ptr<TreeType>>;
+	using IndexType = std::pair<Data, std::unique_ptr<TreeType>>;
 
-	static IndexType Load(Dataset<BoxType> const& dataset, GeoToolbox::SharedAllocatedSize const&)
+	[[nodiscard]] std::shared_ptr<void> Load(Dataset<BoxType> const& dataset) const override
 	{
-		auto data = std::make_unique<Data>();
-		data->dataset = &dataset;
-		auto const dataPtr = data.get();
-		auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(GeoToolbox::MaxElementsPerNode, nanoflann::KDTreeSingleIndexAdaptorFlags::None, MaxThreadCount);
-		return { std::move(data), std::make_unique<TreeType>(int(Dimensions), *dataPtr, params) };
+		auto result = std::make_shared<IndexType>();
+		result->first.dataset = &dataset;
+		auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(GeoToolbox::MaxElementsPerNode, nanoflann::KDTreeSingleIndexAdaptorFlags::None, BaseType::MaxThreadCount);
+		result->second = std::make_unique<TreeType>(int(Dimensions), result->first, params);
+		return result;
 	}
 
-	static int QueryBox(IndexType const& index, BoxType const& queryBox)
+	[[nodiscard]] std::string GetIndexStats(std::shared_ptr<void> const& indexPtr) const override
 	{
-		return BoxSearchLevel(*index.first->dataset, index.second->root_node_, queryBox);
+		auto& index = *static_cast<IndexType const*>(indexPtr.get());
+
+		return BaseType::GetTreeStats(*index.second);
 	}
 
-	static int BoxSearchLevel(Dataset<BoxType> const& dataset, typename TreeType::Node* node, BoxType const& queryBox)
+	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
+	{
+		auto& index = *static_cast<IndexType const*>(indexPtr.get());
+
+		return BoxSearchLevel(*index.second, *index.first.dataset, index.second->root_node_, queryBox);
+	}
+
+	static int BoxSearchLevel(TreeType const& tree, Dataset<BoxType> const& dataset, typename TreeType::Node* node, BoxType const& queryBox)
 	{
 		auto resultCount = 0;
 
@@ -235,10 +361,12 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBa
 		{
 			if (node->child1 == nullptr && node->child2 == nullptr)
 			{
+				GeoToolbox::AddQueryStats_VisitedNodesCount();
+
 				for (auto i = node->node_type.lr.left; i < node->node_type.lr.right; ++i)
 				{
-					GeoToolbox::AddQueryStats_ObjectOverlapsCount();
-					if (GeoToolbox::Overlap<TVector>(queryBox, dataset.GetData()[i].spatialKey))
+					GeoToolbox::AddQueryStats_ObjectTestsCount();
+					if (GeoToolbox::Overlap<TVector>(queryBox, dataset.GetData()[tree.vAcc_[i]].spatialKey))
 					{
 						++resultCount;
 					}
@@ -250,17 +378,17 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBa
 			auto const dimensionIndex = node->node_type.sub.divfeat;
 			typename TreeType::Node* nextNode = nullptr;
 			if (node->child1 != nullptr
-				&& (GeoToolbox::AddQueryStats_ScalarComparisonsCount(), dimensionIndex < Dimensions || queryBox.Min()[dimensionIndex - Dimensions] <= node->node_type.sub.divhigh))
+				&& (GeoToolbox::AddQueryStats_ScalarComparisonsCount(), dimensionIndex < Dimensions || queryBox.Min()[dimensionIndex - Dimensions] <= node->node_type.sub.divlow))
 			{
 				nextNode = node->child1;
 			}
 
 			if (node->child2 != nullptr
-				&& (GeoToolbox::AddQueryStats_ScalarComparisonsCount(), dimensionIndex >= Dimensions || queryBox.Max()[dimensionIndex] >= node->node_type.sub.divlow))
+				&& (GeoToolbox::AddQueryStats_ScalarComparisonsCount(), dimensionIndex >= Dimensions || queryBox.Max()[dimensionIndex] >= node->node_type.sub.divhigh))
 			{
 				if (nextNode != nullptr)
 				{
-					resultCount += BoxSearchLevel(dataset, node->child2, queryBox);
+					resultCount += BoxSearchLevel(tree, dataset, node->child2, queryBox);
 				}
 				else
 				{
@@ -272,11 +400,6 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> : NanoflannStaticKdtreeBa
 		}
 
 		return resultCount;
-	}
-
-	static double QueryNearest(IndexType const& /*index*/, TVector const& /*location*/, int /*nearestCount*/)
-	{
-		return -1;
 	}
 };
 

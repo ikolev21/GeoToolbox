@@ -1,4 +1,4 @@
-# Copyright 2024-2025 Ivan Kolev
+# Copyright 2024-2026 Ivan Kolev
 #
 # Distributed under the Boost Software License, Version 1.0.
 # (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -6,9 +6,9 @@
 # Catch
 
 FetchContent_Declare(
-  Catch2
-  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG        v3.3.2
+	Catch2
+	GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+	GIT_TAG        v3.12.0
 )
 
 FetchContent_MakeAvailable(Catch2)
@@ -37,17 +37,19 @@ endif()
 
 string( TOLOWER ${_id} _id )
 
-set( RUNTIME_ENVIRONMENT_ID ${_id} CACHE STRING "A string that identifies the runtime environment of tests, by default the machine name and the build toolset are used" )
+set( GeoToolbox_RUNTIME_ENVIRONMENT_ID ${_id} CACHE STRING "A string that identifies the runtime environment of tests, by default the machine name and the build toolset are used" )
 
-string( REGEX MATCH "[a-zA-Z0-9_]+" _CHECK_ID ${RUNTIME_ENVIRONMENT_ID} )
-if( NOT _CHECK_ID STREQUAL ${RUNTIME_ENVIRONMENT_ID} )
-	message( FATAL_ERROR "RUNTIME_ENVIRONMENT_ID has invalid characters, only letters, digits and _ are allowed. Requested: ${RUNTIME_ENVIRONMENT_ID}, allowed ${_CHECK_ID}" )
+string( REGEX MATCH "[a-zA-Z0-9_]+" _CHECK_ID ${GeoToolbox_RUNTIME_ENVIRONMENT_ID} )
+if( NOT _CHECK_ID STREQUAL ${GeoToolbox_RUNTIME_ENVIRONMENT_ID} )
+	message( FATAL_ERROR "GeoToolbox_RUNTIME_ENVIRONMENT_ID has invalid characters, only letters, digits and _ are allowed. Requested: ${GeoToolbox_RUNTIME_ENVIRONMENT_ID}, allowed ${_CHECK_ID}" )
 endif()
 
 # GeoToolbox.Test
 
 add_executable( GeoToolbox.Test
 	../Catch.natjmc
+
+	MemoryTracker.cpp
 
 	GeometryTest.cpp
 	ProfilingTest.cpp
@@ -58,6 +60,6 @@ target_link_libraries( GeoToolbox.Test PRIVATE ExtraWarnings MsvcNoDeprecation M
 target_include_directories( GeoToolbox.Test PRIVATE ${FETCHCONTENT_BASE_DIR} )
 set_property( TARGET GeoToolbox.Test PROPERTY VS_USER_PROPS ${CMAKE_CURRENT_BINARY_DIR}/../Msvc.props )
 
-if( BUILD_TESTS_PERFORMANCE )
+if( GeoToolbox_BUILD_TESTS_PERFORMANCE )
 	add_subdirectory( Performance )
 endif()

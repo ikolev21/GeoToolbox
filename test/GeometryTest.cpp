@@ -1,11 +1,10 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #include "GeoToolbox/GeometryTools.hpp"
 
-#include "GeoToolbox/Iterators.hpp"
 #include "GeoToolbox/Profiling.hpp"
 #include "GeoToolbox/SpatialTools.hpp"
 
@@ -15,11 +14,15 @@
 #include <iostream>
 #include <unordered_set>
 
+#include "Performance/TestTools.hpp"
+
 using namespace GeoToolbox;
 using namespace std;
 
 TEST_CASE("Vector")
 {
+	STATIC_REQUIRE(VectorTraits<Vector3>::Name == "array3d"sv);
+
 	Vector2 const x{ DoNotOptimize(1.0), DoNotOptimize(2.0) };
 	Vector2 const y{ 3, DoNotOptimize(4.0) };
 	auto z = x + y;
@@ -36,6 +39,12 @@ TEST_CASE("Vector")
 	REQUIRE(z[0] == 2.0);
 	REQUIRE(z[1] == 2.0);
 
+	z += Zero<Vector2>();
+	REQUIRE(z == Vector2{ 2, 2 });
+
+	z = 4 / z;
+	REQUIRE(z == Vector2{ 2, 2 });
+
 	REQUIRE(Min(z, x) == x);
 	REQUIRE(Max(z, x) == z);
 
@@ -43,13 +52,19 @@ TEST_CASE("Vector")
 	REQUIRE(y - x == Vector2{ 2, 2 });
 	REQUIRE(GetDistanceSquared(x, y - x) == 1.0);
 
+	z = ComponentMultiply(x, y);
+	REQUIRE(z == Vector2{ 3, 8 });
+
 #if defined(ENABLE_EIGEN)
 	EVector2 const ex{ DoNotOptimize(1.0), DoNotOptimize(2.0) };
 	EVector2 const ey{ 1, DoNotOptimize(3.0) };
 
 	REQUIRE(ey - ex == EVector2{ 0, 1 });
 	REQUIRE(GetDistanceSquared(ex, ey) == 1.0);
+	REQUIRE(Zero<EVector2>() == EVector2{ 0, 0 });
 #endif
+
+	REQUIRE(Convert<Vector3>(Vector3f{ 1.f, 2.f, 0 }) == Vector3{ 1., 2., 0 });
 }
 
 TEST_CASE("Box")
@@ -85,21 +100,17 @@ TEST_CASE("Box")
 		array const points = { Vector2{ 0, 0 }, Vector2{ 1, 1 }, Vector2{ 2, 2 } };
 		REQUIRE(Bound(points) == Box2{ { 0, 0 }, { 2, 2 } });
 	}
+
+	REQUIRE(Overlap(box, Box2{ { 0.5, 0.5 }, { 1, 1 } }));
+	REQUIRE(Contains(box, Box2{ { 0.5, 0.5 }, { 1, 1 } }));
+	REQUIRE(Overlap(box, Box2{ { 0.5, 0.5 }, { 3, 3 } }));
+	REQUIRE_FALSE(Contains(box, Box2{ { 0.5, 0.5 }, { 3, 3 } }));
+
+	auto boxf = Box<Vector2f>::Convert( box );
+	REQUIRE( boxf == Box2f{ { 0.f, 0.f }, { 2.f, 2.f } } );
 }
 
 TEST_CASE("Feature")
 {
 	[[maybe_unused]] std::unordered_set<Feature<Vector2>> const featureCanBeStoredInAHashContainer;
-}
-
-
-template <class TTree>
-FeatureId AccumulateRange(TTree const& tree, Box2 const& box)
-{
-	using ElementType = typename TTree::ElementType;
-	return std::accumulate(
-		tree.BeginRangeQuery(box),
-		tree.EndRangeQuery(),
-		FeatureId(0),
-		[](FeatureId acc, ElementType const& el) -> FeatureId { return acc + el->id; });
 }

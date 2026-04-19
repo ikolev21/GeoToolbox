@@ -1,28 +1,40 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
 
-template <typename TSpatialKey>
-struct GeosTemplateStrTree;
+/*
+Of the various spatial indices implemented in GEOS, geos::index::strtree::TemplateSTRtree is the only that makes sense performance-wise:
+* geos::index::kdtree::KdTree was built with the specific purpose to find duplicate points and has poor performance for other tasks, also returns incorrect results in rare cases
+* geos::index::quadtree::Quadtree is consistently slower than STR-tree
+* geos::index::VertexSequencePackedRtree is a tiny bit faster than STR-tree for the kind of data it was designed for (polygons), and much slower for other kinds of data
+All of these have wrappers here, but just TemplateSTRtree is included in the list of indices to test, the others are commented-out in the IndicesToTest definition in SpatialIndexTest.cpp
+*/
 
-template <typename TSpatialKey>
-struct GeosQuadTree;
+#include "SpatialIndexWrapper.hpp"
 
 #ifndef ENABLE_GEOS
 
 template <typename TSpatialKey>
-struct GeosTemplateStrTree
+struct GeosTemplateStrTree : SpatialIndexWrapper<TSpatialKey>
 {
-	using IndexType = void;
 };
 
 template <typename TSpatialKey>
-struct GeosQuadTree
+struct GeosTemplateKdTree : SpatialIndexWrapper<TSpatialKey>
 {
-	using IndexType = void;
+};
+
+template <typename TSpatialKey>
+struct GeosQuadTree : SpatialIndexWrapper<TSpatialKey>
+{
+};
+
+template <typename TSpatialKey>
+struct GeosVertexSequencePackedRtree : SpatialIndexWrapper<TSpatialKey>
+{
 };
 
 #else
@@ -32,6 +44,8 @@ struct GeosQuadTree
 
 #include <geos/version.h>
 #include <geos/index/ItemVisitor.h>
+#include <geos/index/VertexSequencePackedRtree.h>
+#include <geos/index/kdtree/KdTree.h>
 #include <geos/index/quadtree/Quadtree.h>
 #include <geos/index/strtree/TemplateSTRtree.h>
 
@@ -44,60 +58,116 @@ geos::geom::Envelope ToEnvelope(TVector const& point)
 template <class TVector>
 geos::geom::Envelope ToEnvelope(GeoToolbox::Box<TVector> const& box)
 {
+	static_assert(GeoToolbox::VectorTraits<TVector>::Dimensions == 2);
 	return geos::geom::Envelope{ box.Min()[0], box.Max()[0], box.Min()[1], box.Max()[1] };
 }
 
-template <typename TSpatialKey>
-struct GeosTemplateStrTree
+template <typename TSpatialKey, bool DimensionsMatch = GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == 2>
+struct GeosTemplateStrTree : SpatialIndexWrapper<TSpatialKey>
 {
-	static constexpr std::string_view Name = "GEOS " GEOS_VERSION " TemplateSTRTree";
-
-	// TemplateSTRtree does have a remove() operation, but maybe I don't know how to use it properly, because the query crashes later. For now use it as static index.
-	static constexpr auto IsDynamic = false;
-
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
-
 	using BoxType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::BoxType;
-
 	using FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*;
 
 	using IndexType = geos::index::strtree::TemplateSTRtree<FeaturePtr>;
 
-	static IndexType MakeEmptyIndex(GeoToolbox::SharedAllocatedSize const&)
+
+	[[nodiscard]] std::string_view Name() const override
 	{
-		return IndexType{};
+		return "GEOS " GEOS_VERSION " STR-tree";
 	}
 
-	static IndexType Load(Dataset<TSpatialKey> const& dataset, GeoToolbox::SharedAllocatedSize const&)
+	[[nodiscard]] bool IsDynamic() const override
 	{
-		IndexType index;
-		for (auto const&f : dataset.GetData())
+		// TemplateSTRtree does have a remove() operation, but maybe I don't know how to use it properly, because the query crashes later. For now use it as static index.
+		return false;
+	}
+
+	[[nodiscard]] std::string GetIndexStats(std::shared_ptr<void> const& indexPtr) const override
+	{
+		auto& index = *static_cast<IndexType const*>(indexPtr.get());
+
+		using namespace geos::index::strtree;
+		using Node = TemplateSTRNode<FeaturePtr, EnvelopeTraits>;
+		GeoToolbox::AggregateStats<int> elementsPerNode;
+		std::queue<std::pair<Node const*, int>> queue;
+		// For some reason TemplateSTRtree::getRoot() isn't const
+		queue.emplace(const_cast<IndexType&>(index).getRoot(), 1);
+		auto nodeCount = 0;
+		auto maxHeight = 1;
+
+		while (!queue.empty())
 		{
-			Insert(index, &f);
+			auto const [node, height] = queue.front();
+			queue.pop();
+			maxHeight = std::max(maxHeight, height);
+			++nodeCount;
+			auto elemCount = 0;
+			for (auto iter = node->beginChildren(), end = node->endChildren(); iter != end; ++iter)
+			{
+				if (iter->isLeaf())
+				{
+					++elemCount;
+				}
+				else
+				{
+					queue.emplace(iter, height + 1);
+				}
+			}
+
+			if (elemCount > 0)
+			{
+				elementsPerNode.AddValue(elemCount);
+			}
+		}
+
+		std::ostringstream stream;
+		stream << "Nodes: " << nodeCount << " Elems/Leaf: " << elementsPerNode;
+		stream << " Height: " << maxHeight;
+		return stream.str();
+	}
+
+	[[nodiscard]] std::shared_ptr<void> MakeEmptyIndex() const override
+	{
+		return std::make_shared<IndexType>(GeoToolbox::MaxElementsPerNode);
+	}
+
+	[[nodiscard]] std::shared_ptr<void> Load(Dataset<TSpatialKey> const& dataset) const override
+	{
+		auto indexPtr = MakeEmptyIndex();
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
+
+		for (auto const& f : dataset.GetData())
+		{
+			Insert(indexPtr, &f);
 		}
 
 		index.build();
-		return index;
+		return indexPtr;
 	}
 
-	static void Insert(IndexType& index, FeaturePtr feature)
+	void Insert(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const override
 	{
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
 		index.insert(ToEnvelope(feature->spatialKey), feature);
 	}
 
-	static bool Erase(IndexType& /*index*/, FeaturePtr /*feature*/)
+	bool Erase(std::shared_ptr<void> const& /*indexPtr*/, FeaturePtr /*feature*/) const override
 	{
 		// There is some problem with removal, the query crashes later
 		return false;// index.remove(ToEnvelope(feature->spatialKey), feature);
 	}
 
-	static void Rebalance(IndexType& index)
+	void Rebalance(std::shared_ptr<void> const& indexPtr) const override
 	{
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
 		index.build();
 	}
 
-	static int QueryBox(IndexType& index, BoxType const& box)
+	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
 	{
+		// For some reason TemplateSTRtree::query() isn't const
+		auto& index = *const_cast<IndexType*>( static_cast<IndexType const*>(indexPtr.get()));
 		auto count = 0;
 		index.query(ToEnvelope(box), [&count](auto)
 			{
@@ -105,38 +175,48 @@ struct GeosTemplateStrTree
 			});
 		return count;
 	}
-
-	static double QueryNearest(IndexType& /*index*/, VectorType const& /*location*/, int /*nearestCount*/)
-	{
-		return -1;
-	}
 };
 
-template <class TSpatialKey>
-struct GeosQuadTree
+template <typename TSpatialKey>
+struct GeosTemplateStrTree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
 {
-	static constexpr std::string_view Name = "GEOS " GEOS_VERSION " QuadTree";
+};
 
-	static constexpr auto IsDynamic = false;
 
+template <class TSpatialKey, bool DimensionsMatch = GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == 2>
+struct GeosQuadTree : SpatialIndexWrapper<TSpatialKey>
+{
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
 
 	using BoxType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::BoxType;
 
 	using FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*;
 
-	// Need to put the Quadtree into a unique_ptr because it has a deleted copy ctor but doesn't have a move ctor and Load() can't return it by value
-	// Quadtree simply needs to be added a default move ctor, but I prefer not to apply a patch the original source
-	using IndexType = std::unique_ptr<geos::index::quadtree::Quadtree>;
+	using IndexType = geos::index::quadtree::Quadtree;
 
-	static IndexType MakeEmptyIndex(GeoToolbox::SharedAllocatedSize const&)
+
+	[[nodiscard]] std::string_view Name() const override
 	{
-		return std::make_unique<geos::index::quadtree::Quadtree>();
+		return "GEOS " GEOS_VERSION " Quadtree";
 	}
 
-	static IndexType Load(Dataset<TSpatialKey> const& dataset, GeoToolbox::SharedAllocatedSize const& allocatedSize )
+	[[nodiscard]] std::shared_ptr<void> MakeEmptyIndex() const override
 	{
-		auto index = MakeEmptyIndex(allocatedSize);
+		return std::make_shared<IndexType>();
+	}
+
+	[[nodiscard]] std::string GetIndexStats(std::shared_ptr<void> const& indexPtr) const override
+	{
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
+
+		std::ostringstream stream;
+		stream << "Height: " << index.depth();
+		return stream.str();
+	}
+
+	[[nodiscard]] std::shared_ptr<void> Load(Dataset<TSpatialKey> const& dataset) const override
+	{
+		auto index = std::make_shared<IndexType>();
 		for (auto const& f : dataset.GetData())
 		{
 			Insert(index, &f);
@@ -150,20 +230,20 @@ struct GeosQuadTree
 		return index;
 	}
 
-	static void Insert(IndexType const& index, FeaturePtr feature)
+	void Insert(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const override
 	{
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
+
 		auto const envelope = ToEnvelope(feature->spatialKey);
-		index->insert(&envelope, const_cast<GeoToolbox::Feature<TSpatialKey>*>(feature));
+		index.insert(&envelope, const_cast<GeoToolbox::Feature<TSpatialKey>*>(feature));
 	}
 
-	static bool Erase(IndexType& /*index*/, FeaturePtr /*feature*/)
-	{
-		return false;// index.remove(ToEnvelope(feature->spatialKey), feature);
-	}
+	//bool Erase(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const override
+	//{
+	//	auto& index = *static_cast<IndexType*>(indexPtr.get());
 
-	static void Rebalance(IndexType&)
-	{
-	}
+	//	return index.remove(ToEnvelope(feature->spatialKey), feature);
+	//}
 
 	struct CountingVisitor final : geos::index::ItemVisitor
 	{
@@ -180,19 +260,130 @@ struct GeosQuadTree
 		}
 	};
 
-	static int QueryBox(IndexType const& index, BoxType const& box)
+	// Non-const query method??
+	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
 	{
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
+
 		auto const envelope = ToEnvelope(box);
 		CountingVisitor visitor;
 		visitor.queryBox = &box;
-		index->query(&envelope, visitor);
+		index.query(&envelope, visitor);
 		return visitor.count;
 	}
+};
 
-	static double QueryNearest(IndexType const& /*index*/, VectorType const& /*location*/, int /*nearestCount*/)
+template <typename TSpatialKey>
+struct GeosQuadTree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
+{
+};
+
+
+template <class TSpatialKey, bool IsSupported = GeoToolbox::SpatialKeyIsPoint<TSpatialKey> && GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == 2>
+struct GeosVertexSequencePackedRtree : SpatialIndexWrapper<TSpatialKey>
+{
+	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
+
+	using BoxType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::BoxType;
+
+	using FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*;
+
+	// VertexSequencePackedRtree references the coordintes in an external container
+	using IndexType = std::pair<std::shared_ptr<geos::geom::CoordinateSequence>, geos::index::VertexSequencePackedRtree>;
+
+
+	[[nodiscard]] std::string_view Name() const override
 	{
-		return -1;
+		return "GEOS " GEOS_VERSION " VertexRtree";
 	}
+
+	[[nodiscard]] std::shared_ptr<void> Load(Dataset<TSpatialKey> const& dataset) const override
+	{
+		auto coordinates = std::make_shared<geos::geom::CoordinateSequence>(geos::geom::CoordinateSequence::XY(dataset.GetSize()));
+		auto i = 0;
+		for (auto const& f : dataset.GetData())
+		{
+			DEBUG_ASSERT(f.id == i);
+			coordinates->template getAt<geos::geom::CoordinateXY>(i++) = { f.spatialKey[0], f.spatialKey[1] };
+		}
+
+		return std::make_shared<IndexType>(coordinates, geos::index::VertexSequencePackedRtree{ *coordinates });
+	}
+
+	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
+	{
+		auto& index = *static_cast<IndexType const*>(indexPtr.get());
+
+		std::vector<std::size_t> result;
+		index.second.query(ToEnvelope(box), result);
+		return int(result.size());
+	}
+};
+
+// Turn off for box keys
+template <typename TSpatialKey>
+struct GeosVertexSequencePackedRtree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
+{
+};
+
+
+template <class TSpatialKey, bool IsSupported = GeoToolbox::SpatialKeyIsPoint<TSpatialKey> && GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == 2>
+struct GeosKdTree : SpatialIndexWrapper<TSpatialKey>
+{
+	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
+
+	using BoxType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::BoxType;
+
+	using FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*;
+
+	using IndexType = geos::index::kdtree::KdTree;
+
+
+	[[nodiscard]] std::string_view Name() const override
+	{
+		return "GEOS " GEOS_VERSION " K-d Tree";
+	}
+
+	[[nodiscard]] std::shared_ptr<void> MakeEmptyIndex() const override
+	{
+		return std::make_shared<IndexType>( /*0.1*/ );
+	}
+
+	// No optimized bulk-loading
+	[[nodiscard]] std::shared_ptr<void> Load(Dataset<TSpatialKey> const& dataset) const override
+	{
+		auto index = std::make_shared<IndexType>( /*0.1*/ );
+		for (auto const& f : dataset.GetData())
+		{
+			Insert(index, &f);
+		}
+
+		return index;
+	}
+
+	void Insert(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const override
+	{
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
+
+		index.insert({ feature->spatialKey[0], feature->spatialKey[1] }, const_cast<GeoToolbox::Feature<TSpatialKey>*>(feature));
+	}
+
+	// Non-const query method??
+	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
+	{
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
+
+		std::vector<geos::index::kdtree::KdNode*> result;
+		index.query(ToEnvelope(box), result);
+		return int(result.size());
+		//return int(std::accumulate(result.begin(), result.end(), std::size_t{ 0 }, [](std::size_t total, auto const& node) { return total + node->getCount(); }));
+	}
+};
+
+// Turn off for box keys
+template <typename TSpatialKey>
+struct GeosKdTree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
+{
 };
 
 #endif

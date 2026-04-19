@@ -1,10 +1,11 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
 
+#include <sstream>
 #include <stdexcept>
 
 #ifndef MAKE_STRING
@@ -55,19 +56,34 @@ namespace GeoToolbox
 #endif
 	}
 
-	template <class TException = std::logic_error>
-	constexpr void Assert(bool condition, char const* message)
+	template <typename... T>
+	std::string MakeAssertMessage()
+	{
+		return {};
+	}
+
+	template <typename... T>
+	auto MakeAssertMessage(T&&... args)
+	{
+		std::ostringstream s;
+		((s << args), ...);
+		return s.str();
+	}
+
+	template <class T>
+	constexpr void Assert(bool condition, T&& messageMaker)
 	{
 		if (!condition)
 		{
-			throw TException{ message };
+			throw std::logic_error( messageMaker() );
 		}
 	}
 }
 
 #ifndef ASSERT
 #	define ASSERT( condition, ... ) \
-		GeoToolbox::Assert<__VA_ARGS__>( condition, "Assertion failed: " #condition " at " __FILE__ ":" MAKE_STRING( __LINE__ ) )
+		GeoToolbox::Assert( condition, [&] { auto result = std::string( "Assertion failed: " #condition " at " __FILE__ ":" MAKE_STRING( __LINE__ ) ); \
+			auto const extra = GeoToolbox::MakeAssertMessage( __VA_ARGS__ ); if ( !extra.empty() ) result += '\n' + extra; return result; } )
 #endif
 
 #if !defined( DEBUG_ASSERT )

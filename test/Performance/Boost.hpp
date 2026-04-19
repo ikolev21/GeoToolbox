@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -8,13 +8,13 @@
 #ifndef ENABLE_BOOST
 
 template <typename TSpatialKey>
-struct BoostRtree
+struct BoostRtree : SpatialIndexWrapper<TSpatialKey>
 {
-	using IndexType = void;
 };
 
 #else
 
+#include "SpatialIndexWrapper.hpp"
 #include "TestTools.hpp"
 #include "GeoToolbox/Iterators.hpp"
 #include "GeoToolbox/SpatialTools.hpp"
@@ -35,6 +35,7 @@ namespace Bgi = boost::geometry::index;
 
 BOOST_GEOMETRY_REGISTER_STD_ARRAY_CS(cs::cartesian)
 BOOST_GEOMETRY_REGISTER_BOX(GeoToolbox::Box<GeoToolbox::Vector2>, GeoToolbox::Vector2, Min(), Max())
+BOOST_GEOMETRY_REGISTER_BOX(GeoToolbox::Box<GeoToolbox::Vector3f>, GeoToolbox::Vector3f, Min(), Max())
 #if defined( ENABLE_EIGEN )
 BOOST_GEOMETRY_REGISTER_POINT_2D(GeoToolbox::EVector2, double, cs::cartesian, operator[](0), operator[](1))
 BOOST_GEOMETRY_REGISTER_BOX(GeoToolbox::Box<GeoToolbox::EVector2>, GeoToolbox::EVector2, Min(), Max())
@@ -54,59 +55,54 @@ struct Bgi::indexable<GeoToolbox::Feature<TSpatialKey> const*>
 
 
 template <typename TSpatialKey>
-struct BoostRtree
+struct BoostRtree : SpatialIndexWrapper<TSpatialKey>
 {
-	static constexpr std::string_view Name = "Boost R-tree " BOOST_LIB_VERSION;
-
-	static constexpr auto IsDynamic = true;
-
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
 
 	using BoxType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::BoxType;
 
 	using FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*;
 
-	using AllocatorType = GeoToolbox::ProfileAllocator<FeaturePtr, boost::container::new_allocator<FeaturePtr>>;
+	using IndexType = Bgi::rtree<FeaturePtr, Bgi::rstar<GeoToolbox::MaxElementsPerNode>>;
 
-	using IndexType = Bgi::rtree<
-		FeaturePtr,
-		Bgi::rstar<GeoToolbox::MaxElementsPerNode>,
-		Bgi::indexable<FeaturePtr>,
-		Bgi::equal_to<FeaturePtr>,
-		AllocatorType>;
-
-	static IndexType MakeEmptyIndex(GeoToolbox::SharedAllocatedSize allocatorStats)
+	[[nodiscard]] std::string_view Name() const override
 	{
-		return IndexType{
-			Bgi::rstar<GeoToolbox::MaxElementsPerNode>{},
-			Bgi::indexable<FeaturePtr>{},
-			Bgi::equal_to<FeaturePtr>{},
-			AllocatorType{ std::move(allocatorStats) } };
+		return "Boost " BOOST_LIB_VERSION " R-tree";
 	}
 
-	static IndexType Load(Dataset<TSpatialKey> const& dataset, GeoToolbox::SharedAllocatedSize allocatorStats)
+	[[nodiscard]] bool IsDynamic() const override
+	{
+		return true;
+	}
+
+	[[nodiscard]] std::shared_ptr<void> MakeEmptyIndex() const override
+	{
+		return std::make_shared<IndexType>(Bgi::rstar<GeoToolbox::MaxElementsPerNode>{});
+	}
+
+	[[nodiscard]] std::shared_ptr<void> Load(Dataset<TSpatialKey> const& dataset) const override
 	{
 		auto const data = dataset.GetData();
-		return { GeoToolbox::ValueIterator{ data.data() }, GeoToolbox::ValueIterator{ data.data() + data.size() }, AllocatorType{ std::move(allocatorStats) } };
+		return std::make_shared<IndexType>(GeoToolbox::ValueIterator{ data.data() }, GeoToolbox::ValueIterator{ data.data() + data.size() });
 	}
 
-	static void Insert(IndexType& index, FeaturePtr feature)
+	void Insert(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const override
 	{
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
+
 		index.insert(feature);
 	}
 
-	static bool Erase(IndexType& index, FeaturePtr feature)
+	bool Erase(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const override
 	{
+		auto& index = *static_cast<IndexType*>(indexPtr.get());
+
 		return index.remove(feature) == 1;
 	}
 
-	static void Rebalance(IndexType&)
-	{
-	}
+	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override;
 
-	static int QueryBox(IndexType const&, BoxType const& queryBox);
-
-	static double QueryNearest(IndexType const&, VectorType const& location, int nearestCount);
+	[[nodiscard]] double QueryNearest(std::shared_ptr<void> const& indexPtr, VectorType const& location, int nearestCount) const override;
 };
 
 #endif

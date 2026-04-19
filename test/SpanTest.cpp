@@ -1,8 +1,10 @@
-﻿// Copyright 2024-2025 Ivan Kolev
+﻿// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+// ReSharper disable CppClangTidyMiscConstCorrectness
+// ReSharper disable CppClangTidyReadabilityContainerSizeEmpty
 #include "GeoToolbox/Span.hpp"
 
 #include <catch2/catch_test_macros.hpp>

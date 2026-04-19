@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -17,22 +17,26 @@ namespace Bgi = boost::geometry::index;
 
 
 template <typename TSpatialKey>
-int BoostRtree<TSpatialKey>::QueryBox(IndexType const& index, BoxType const& queryBox)
+int BoostRtree<TSpatialKey>::QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const
 {
+	auto& index = *static_cast<IndexType const*>(indexPtr.get());
+
 	auto count = 0;
 	index.query(Bgi::intersects(queryBox), CountingOutputIterator{ count }/*, &comparisonsCount*/);
 	return count;
 }
 
 template <typename TSpatialKey>
-double BoostRtree<TSpatialKey>::QueryNearest(IndexType const& index, VectorType const& location, int nearestCount)
+double BoostRtree<TSpatialKey>::QueryNearest(std::shared_ptr<void> const& indexPtr, VectorType const& location, int nearestCount) const
 {
+	auto& index = *static_cast<IndexType const*>(indexPtr.get());
+
 	//vector<pair<FeatureId, double>> nearest;
 	//nearest.reserve(nearestCount);
 	auto distSum = 0.0;
 	index.query(
 		Bgi::nearest(location, nearestCount),
-		OutputIteratorFunction{ [&distSum, &location](FeaturePtr value) { distSum += GetDistanceSquared(location, value->spatialKey); } });
+		OutputIteratorFunction{ [&distSum, &location](FeaturePtr feature) { distSum += double(GetDistanceSquared(location, feature->spatialKey)); } });
 	//auto const distSum = std::accumulate(nearest.begin(), nearest.end(), 0.0, [](double sum, pair<FeatureId, double> const& f) { return sum + f.second; });
 
 	//cout << "BoostRtree nearest result for location " << location << ": " << distSum << " -> ";
@@ -42,7 +46,9 @@ double BoostRtree<TSpatialKey>::QueryNearest(IndexType const& index, VectorType 
 }
 
 template struct BoostRtree<Vector2>;
+template struct BoostRtree<Vector3f>;
 template struct BoostRtree<Box2>;
+template struct BoostRtree<Box3f>;
 #if defined( ENABLE_EIGEN )
 template struct BoostRtree<EVector2>;
 template struct BoostRtree<Box<EVector2>>;

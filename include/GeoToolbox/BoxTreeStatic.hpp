@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -6,10 +6,11 @@
 #pragma once
 
 #include "GeoToolbox/GeometryTools.hpp"
+#include "GeoToolbox/Profiling.hpp"
 #include "GeoToolbox/Span.hpp"
 #include "GeoToolbox/SpatialTools.hpp"
 
-#include <bitset>
+#include <queue>
 
 namespace GeoToolbox
 {
@@ -36,28 +37,75 @@ namespace GeoToolbox
 		}
 	};
 
+	template <typename TSpatialKey>
+	struct BoxTreeTraits<Feature<TSpatialKey> const*>
+	{
+		using ElementType = Feature<TSpatialKey> const*;
+
+		using SpatialKeyType = TSpatialKey;
+
+		using VectorType = typename SpatialKeyTraits<TSpatialKey>::VectorType;
+
+		[[nodiscard]] static bool AreEqual(ElementType const& a, ElementType const& b)
+		{
+			return a == b;
+		}
+
+		[[nodiscard]] static auto GetSpatialKey(ElementType feature)
+		{
+			return feature->spatialKey;
+		}
+	};
+
 	namespace Detail
 	{
 		template <int NDimensions>
 		struct BoxTreeStaticNode_BoxData
 		{
 			int middleChild = -1;
-			std::bitset<NDimensions> lockedAxesMask{};
+			// An std::bitset would serve better, but unfortunately it's size cannot be controlled, and GCC uses 64 bits while 32 are enough for us
+			std::uint32_t lockedAxesMask = 0;
 		};
 
 		template <>
 		struct BoxTreeStaticNode_BoxData<0>
 		{
 		};
+
+		template <class TVector>
+		[[nodiscard]] auto GetMaxDistanceSquared(TVector const& point, Box<TVector> const& box)
+		{
+			typename VectorTraits<TVector>::ScalarType result{ 0 };
+			auto const center = box.Center();
+			for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
+			{
+				if (point[i] <= center[i])
+				{
+					result += Square(box.Max()[i] - point[i]);
+				}
+				else
+				{
+					result += Square(point[i] - box.Min()[i]);
+				}
+			}
+
+			return result;
+		}
 	}
 
 	// A static k-d tree that supports boxes. The boxes that intersect the splitting line are pushed into a new node that gets split further down by the other axes
 	template <typename TElement, class TTraits = BoxTreeTraits<TElement>, class TElementAllocator = std::allocator<TElement>>
 	class BoxTreeStatic
 	{
+	public:
+		// Strategy 2 calculates the exact (tight) box of each node, strategy 1 only updates the limit on the split axis. 2 is significantly faster (both for build and query) only for Polygon dataset
+		static constexpr auto NewBoxStrategy = 1;
+
 		static_assert(std::is_move_constructible_v<TElement>&& std::is_move_assignable_v<TElement>);
 
 		struct Node;
+
+	private:
 
 		using NodeAllocatorType = typename std::allocator_traits<TElementAllocator>::template rebind_alloc<Node>;
 
@@ -65,15 +113,17 @@ namespace GeoToolbox
 
 		std::vector<Node, NodeAllocatorType> nodes_;
 
+		/* [[no_unique_address]] */ TTraits traits_;
+
 		int maxElementsPerNode_;
 
 	public:
 
-		static constexpr auto MaxElementsPerNode = 64;
+		static constexpr auto MaxElementsPerNode = GeoToolbox::MaxElementsPerNode;
 
 		using ElementType = TElement;
 		using SpatialKeyType = typename TTraits::SpatialKeyType;
-		using IndexType = int;
+		using IndexType = int;	// Type that covers the maximum possible number of elements. May be passed as template parameter
 
 		using VectorType = typename TTraits::VectorType;
 		using VectorTraitsType = VectorTraits<VectorType>;
@@ -91,15 +141,11 @@ namespace GeoToolbox
 		static constexpr auto KeyIsBox = IsSpecialization<SpatialKeyType, Box>;
 
 
-		BoxTreeStatic(int maxElementsPerNode = 0, TElementAllocator const& elementAllocator = TElementAllocator{})
-			: elements_(elementAllocator)
-			, nodes_(NodeAllocatorType(elementAllocator))
+		explicit BoxTreeStatic(std::vector<TElement, TElementAllocator> elements, int maxElementsPerNode = 0, TTraits traits = {})
+			: elements_{ TElementAllocator(elements.get_allocator()) }
+			, nodes_(NodeAllocatorType(elements.get_allocator()))
+			, traits_{ traits }
 			, maxElementsPerNode_{ maxElementsPerNode > 0 ? maxElementsPerNode : MaxElementsPerNode }
-		{
-		}
-
-		explicit BoxTreeStatic(std::vector<TElement, TElementAllocator> elements, int maxElementsPerNode = 0)
-			: BoxTreeStatic{ maxElementsPerNode, elements.get_allocator() }
 		{
 			Create(std::move(elements));
 		}
@@ -111,9 +157,14 @@ namespace GeoToolbox
 			return elements_.empty();
 		}
 
-		[[nodiscard]] Span<ElementType const> Elements() const
+		[[nodiscard]] Span<ElementType const> Elements() const noexcept
 		{
 			return elements_;
+		}
+
+		[[nodiscard]] Span<Node const> Nodes() const noexcept
+		{
+			return nodes_;
 		}
 
 		[[nodiscard]] int GetMaxElementsPerNode() const noexcept
@@ -121,9 +172,19 @@ namespace GeoToolbox
 			return maxElementsPerNode_;
 		}
 
+		[[nodiscard]] IndexType GetElementsCount() const noexcept
+		{
+			return IndexType(Size(elements_));
+		}
+
 		[[nodiscard]] int GetNodesCount() const noexcept
 		{
 			return int(Size(nodes_));
+		}
+
+		[[nodiscard]] TElementAllocator GetAllocator() const
+		{
+			return elements_.get_allocator();
 		}
 
 		[[nodiscard]] NodeIterator GetRootNode() const
@@ -141,37 +202,255 @@ namespace GeoToolbox
 			return { *this, -1 };
 		}
 
-		[[nodiscard]] RangeQueryIterator BeginRangeQuery(BoxType const& range) const
-		{
-			return BeginRangeQuery(GetRootNode(), range);
-		}
-
-		[[nodiscard]] RangeQueryIterator BeginRangeQuery(NodeIterator startRoot, BoxType const& range) const;
+		[[nodiscard]] RangeQueryIterator BeginRangeQuery(BoxType const& range) const;
 
 		[[nodiscard]] RangeQueryIterator EndRangeQuery() const
 		{
 			return RangeQueryIterator{ EndNodes() };
 		}
 
-		[[nodiscard]] std::vector<std::pair<IndexType, ScalarType>> QueryNearest(VectorType const& targetLocation, int nearestCount = 0, ScalarType maxDistance = -1) const;
+		template <class TVisitor>
+		void QueryRange(BoxType const& range, TVisitor&& visitor) const
+		{
+			if (nodes_.empty())
+			{
+				return;
+			}
+
+			QueryRange(0, range, visitor);
+		}
+
+		std::vector<IndexType> QueryRange(BoxType const& range) const
+		{
+			std::vector<IndexType> result;
+			QueryRange(range, [this, &result](ElementType const& elem) { result.push_back(IndexType(&elem - elements_.data())); });
+			return result;
+		}
+
+		template <class TVisitor>
+		void QueryRange(int nodeIndex, BoxType const& range, TVisitor&& visitor) const
+		{
+			DEBUG_ASSERT(nodeIndex >= 0);
+			DEBUG_ASSERT(nodeIndex < int(nodes_.size()));
+
+			while (nodeIndex >= 0)
+			{
+				auto const& node = nodes_[nodeIndex];
+				AddQueryStats_BoxOverlapsCount();
+				if (Contains(range, node.box))
+				{
+					VisitSubTree(nodeIndex, visitor);
+					return;
+				}
+
+				if (node.IsLeaf())
+				{
+					AddQueryStats_VisitedNodesCount();
+					for (auto elementIndex = node.elementsBegin; elementIndex < node.elementsEnd; ++elementIndex)
+					{
+						AddQueryStats_ObjectTestsCount();
+						if (Overlap(range, traits_.GetSpatialKey(elements_[elementIndex])))
+						{
+							visitor(elements_[elementIndex]);
+						}
+					}
+
+					return;
+				}
+
+				nodeIndex = -1;
+				if (node.lowChild >= 0 && OverlapWithNode(range, node.lowChild))
+				{
+					nodeIndex = node.lowChild;
+				}
+
+				if constexpr (KeyIsBox)
+				{
+					if (node.boxData.middleChild >= 0 && OverlapWithNode(range, node.boxData.middleChild))
+					{
+						if (nodeIndex >= 0)
+						{
+							QueryRange(node.boxData.middleChild, range, visitor);
+						}
+						else
+						{
+							nodeIndex = node.boxData.middleChild;
+						}
+					}
+				}
+
+				if (node.highChild >= 0 && OverlapWithNode(range, node.highChild))
+				{
+					if (nodeIndex >= 0)
+					{
+						QueryRange(node.highChild, range, visitor);
+					}
+					else
+					{
+						nodeIndex = node.highChild;
+					}
+				}
+			}
+		}
+
+		int QueryNearest(std::vector<std::pair<IndexType, ScalarType>>& result, VectorType const& targetLocation, int nearestCount = 0, ScalarType maxDistance = -1) const
+		{
+			if (elements_.empty())
+			{
+				return 0;
+			}
+
+			std::array<SearchNode, 64> buffer;
+			std::pmr::monotonic_buffer_resource resource{ buffer.data(), buffer.size() };
+			std::pmr::polymorphic_allocator<int> allocator{ &resource };
+			std::pmr::vector<SearchNode> stack{ allocator };
+
+			return QueryNearest_(result, targetLocation, nearestCount, maxDistance, stack);
+		}
+
+		[[nodiscard]] std::vector<std::pair<IndexType, ScalarType>> QueryNearest(VectorType const& targetLocation, int nearestCount = 0, ScalarType maxDistance = -1) const
+		{
+			std::vector<std::pair<IndexType, ScalarType>> result;
+			QueryNearest(result, targetLocation, nearestCount, maxDistance);
+			return result;
+		}
+
+		//mutable int MaxNodeStackDepth = 0;
 
 	private:
 
+		struct SearchNode
+		{
+			int nodeIndex;
+			ScalarType distance2;
+
+			[[nodiscard]] bool operator<(SearchNode const& other) const noexcept
+			{
+				return distance2 > other.distance2;
+			}
+		};
+
+		static void InsertIntoStack(std::pmr::vector<SearchNode>& nodeStack, int nodeIndex, ScalarType distance2)
+		{
+			auto i = int(nodeStack.size()) - 1;
+			for (; i >= 0; --i)
+			{
+				if (distance2 <= nodeStack[i].distance2)
+				{
+					break;
+				}
+			}
+
+			nodeStack.insert(nodeStack.begin() + (i + 1), SearchNode{ nodeIndex, distance2 });
+		}
+
+		[[nodiscard]] int QueryNearest_(std::vector<std::pair<IndexType, ScalarType>>& result, VectorType const& targetLocation, int nearestCount, ScalarType maxDistance, std::pmr::vector<SearchNode>& nodeStack) const
+		{
+			if (nearestCount > 0)
+			{
+				result.reserve(nearestCount + 1);
+			}
+			else
+			{
+				ASSERT(maxDistance > 0);
+				nearestCount = -1;
+			}
+
+			auto const distanceToFullBox = GetDistanceSquared(targetLocation, nodes_[0].box);
+			auto const maxPossibleDistance2 = Detail::GetMaxDistanceSquared(targetLocation, nodes_[0].box);
+			auto worstDistance2 = maxDistance <= 0 ? maxPossibleDistance2 : std::min(maxPossibleDistance2, Square(maxDistance));
+
+			nodeStack.push_back(SearchNode{ 0, distanceToFullBox });
+			while (!nodeStack.empty())
+			{
+				//MaxNodeStackDepth = std::max(MaxNodeStackDepth, int(nodeStack.size()));
+				auto [currentNodeIndex, currentNodeDistance2] = nodeStack.back();
+				nodeStack.pop_back();
+
+				AddQueryStats_ScalarComparisonsCount();
+				if (currentNodeDistance2 > worstDistance2)
+				{
+					break;
+				}
+
+				auto const& node = nodes_[currentNodeIndex];
+				if (node.IsLeaf())
+				{
+					AddQueryStats_VisitedNodesCount();
+
+					for (auto elementIndex = node.elementsBegin; elementIndex < node.elementsEnd; ++elementIndex)
+					{
+						AddQueryStats_ObjectTestsCount();
+						auto const distance2 = GetDistanceSquared(targetLocation, traits_.GetSpatialKey(elements_[elementIndex]));
+						if (distance2 > worstDistance2)
+						{
+							continue;
+						}
+
+						auto position = std::lower_bound(result.begin(), result.end(), distance2, [](auto const& pair, ScalarType v) { return pair.second < v; });
+						result.emplace(position, elementIndex, distance2);
+						if (Size(result) == nearestCount + 1)
+						{
+							result.erase(--result.end());
+							worstDistance2 = result.back().second;
+						}
+					}
+
+					continue;
+				}
+
+				ScalarType d2;
+				if (node.lowChild >= 0 && (d2 = GetDistanceSquared(targetLocation, nodes_[node.lowChild].box)) <= worstDistance2)
+				{
+					InsertIntoStack(nodeStack, node.lowChild, d2);
+				}
+
+				if (node.highChild >= 0 && (d2 = GetDistanceSquared(targetLocation, nodes_[node.highChild].box)) <= worstDistance2)
+				{
+					InsertIntoStack(nodeStack, node.highChild, d2);
+				}
+
+				if constexpr (KeyIsBox)
+				{
+					if (node.boxData.middleChild >= 0 && (d2 = GetDistanceSquared(targetLocation, nodes_[node.boxData.middleChild].box)) <= worstDistance2)
+					{
+						InsertIntoStack(nodeStack, node.boxData.middleChild, d2);
+					}
+				}
+			}
+
+			return int(result.size());
+		}
+
 		void Build();
 
-		void SplitNode(int nodeIndex);
+		bool SplitNode(int nodeIndex);
 
-		IndexType PartitionPoints(Node const&, int splitAxis, ScalarType splitPosition);
+		bool SplitNode(int nodeIndex, int splitAxis, ScalarType splitPosition);
+
+		std::pair<IndexType, IndexType> PartitionPoints(Node const&, int splitAxis, ScalarType splitPosition);
 
 		std::pair<IndexType, IndexType> PartitionBoxes(Node const&, int splitAxis, ScalarType& splitPosition);
 
-		void ReduceBoxLeft(BoxType& box, IndexType startIndex, IndexType count, int axis)
+		std::pair<IndexType, IndexType> Partition(Node const& node, int splitAxis, ScalarType& splitPosition)
+		{
+			if constexpr (KeyIsBox)
+			{
+				return PartitionBoxes(node, splitAxis, splitPosition);
+			}
+			else
+			{
+				return PartitionPoints(node, splitAxis, splitPosition);
+			}
+		}
+
+		void ReduceBoxAtLowEnd(BoxType& box, IndexType startIndex, IndexType count, int axis)
 		{
 			auto newLimit = box[1][axis];
 			auto const end = startIndex + count;
 			for (auto i = startIndex; i < end; ++i)
 			{
-				newLimit = std::min(newLimit, GetLowBound(TTraits::GetSpatialKey(elements_[i]), axis));
+				newLimit = std::min(newLimit, GetLowBound(traits_.GetSpatialKey(elements_[i]), axis));
 			}
 
 			auto newEnd = box[0];
@@ -179,19 +458,22 @@ namespace GeoToolbox
 			box = { newEnd, box[1] };
 		}
 
-		void ReduceBoxRight(BoxType& box, IndexType startIndex, IndexType count, int axis)
+		void ReduceBoxAtHighEnd(BoxType& box, IndexType startIndex, IndexType count, int axis)
 		{
 			auto newLimit = box[0][axis];
 			auto const end = startIndex + count;
 			for (auto i = startIndex; i < end; ++i)
 			{
-				newLimit = std::max(newLimit, GetHighBound(TTraits::GetSpatialKey(elements_[i]), axis));
+				newLimit = std::max(newLimit, GetHighBound(traits_.GetSpatialKey(elements_[i]), axis));
 			}
 
 			auto newEnd = box[1];
 			newEnd[axis] = newLimit;
 			box = { box[0], newEnd };
 		}
+
+		template <class TVisitor>
+		void VisitSubTree(int rootNodeIndex, TVisitor&& visitor) const;
 
 		[[nodiscard]] bool OverlapWithNode(BoxType const& range, int nodeIndex) const
 		{
@@ -202,6 +484,11 @@ namespace GeoToolbox
 		[[nodiscard]] int GetFirstChildOverlap(int nodeIndex, BoxType const& range) const
 		{
 			auto const& node = nodes_[nodeIndex];
+			if (node.IsLeaf())
+			{
+				return -1;
+			}
+
 			if (node.lowChild >= 0 && OverlapWithNode(range, node.lowChild))
 			{
 				return node.lowChild;
@@ -249,99 +536,75 @@ namespace GeoToolbox
 			return -1;
 		}
 
-		[[nodiscard]] int GetLeftOrRightNear(Node const& node, VectorType const& location, ScalarType worstDistance2) const
+		[[nodiscard]] auto Bound(Span<TElement const> elements)
 		{
-			if (location[node.splitAxis] < node.splitPosition)
-			{
-				if (node.lowChild >= 0)
-				{
-					return node.lowChild;
-				}
-
-				return node.highChild >= 0 && Square(node.splitPosition - location[node.splitAxis]) < worstDistance2 ? node.highChild : -1;
-			}
-
-			if (node.highChild >= 0)
-			{
-				return node.highChild;
-			}
-			
-			return node.lowChild >= 0 && Square(location[node.splitAxis] - node.splitPosition) < worstDistance2 ? node.lowChild : -1;
-		}
-
-		[[nodiscard]] int GetFirstChildNear(int nodeIndex, VectorType const& location, ScalarType worstDistance2) const
-		{
-			auto const& node = nodes_[nodeIndex];
-			if (node.splitAxis < 0)
-			{
-				return -1;
-			}
-
-			if constexpr (KeyIsBox)
-			{
-				if (node.boxData.middleChild >= 0)
-				{
-					return node.boxData.middleChild;
-				}
-			}
-
-			return GetLeftOrRightNear(node, location, worstDistance2);
-		}
-
-		[[nodiscard]] int GetNextSiblingNear(int nodeIndex, VectorType const& location, ScalarType worstDistance2) const
-		{
-			if (nodes_[nodeIndex].parent < 0)
-			{
-				return -1;
-			}
-
-			auto const& parentNode = nodes_[nodes_[nodeIndex].parent];
-
-			if constexpr (KeyIsBox)
-			{
-				if (nodeIndex == parentNode.boxData.middleChild)
-				{
-					return GetLeftOrRightNear(parentNode, location, worstDistance2);
-				}
-			}
-
-			if (nodeIndex == parentNode.lowChild)
-			{
-				if (location[parentNode.splitAxis] >= parentNode.splitPosition)
-				{
-					return -1;
-				}
-
-				return parentNode.highChild >= 0 && Square(parentNode.splitPosition - location[parentNode.splitAxis]) < worstDistance2 ? parentNode.highChild : -1;
-			}
-
-			DEBUG_ASSERT(nodeIndex == parentNode.highChild);
-			if (location[parentNode.splitAxis] < parentNode.splitPosition)
-			{
-				return -1;
-			}
-
-			return parentNode.lowChild >= 0 && Square(location[parentNode.splitAxis] - parentNode.splitPosition) < worstDistance2 ? parentNode.lowChild : -1;
+			return GeoToolbox::Bound(elements, [this](TElement const& x) { return traits_.GetSpatialKey(x); });
 		}
 	};
 
 	template <typename TElement, class TTraits, class TElementAllocator>
 	struct BoxTreeStatic<TElement, TTraits, TElementAllocator>::Node
 	{
-		int parent;
-		int lowChild = -1;
-		int highChild = -1;
-		IndexType elementsBegin = -1, elementsEnd = -1;
-		Box<VectorType> box{};
-		ScalarType splitPosition = 0;
-		char splitAxis = -1;
-		/* [[no_unique_address]] */ Detail::BoxTreeStaticNode_BoxData<IsSpecialization<SpatialKeyType, Box> ? VectorTraits<VectorType>::Dimensions : 0> boxData{};
+		friend class BoxTreeStatic;
 
-		[[nodiscard]] bool IsAxisLocked(int axis) const noexcept(!IsSpecialization<SpatialKeyType, Box>)
+		int parent;
+
+	private:
+		union
+		{
+			int lowChild;
+			IndexType elementsBegin;
+		};
+		union
+		{
+			int highChild;
+			IndexType elementsEnd;
+		};
+
+	public:
+		char splitAxis;
+		/* [[no_unique_address]] */ Detail::BoxTreeStaticNode_BoxData<IsSpecialization<SpatialKeyType, Box> ? VectorTraits<VectorType>::Dimensions : 0> boxData;
+		Box<VectorType> box;
+
+
+		Node(IndexType elementsCount, BoxType const& box)
+			: parent{ -1 }
+			, splitAxis{ -1 }
+			, box{ box }
+		{
+			elementsBegin = 0;
+			elementsEnd = elementsCount;
+		}
+
+		Node(int parent, IndexType elementsBegin_, IndexType elementsEnd_, BoxType const& box)
+			: parent{ parent }
+			, splitAxis{ -1 }
+			, box{ box }
+		{
+			elementsBegin = elementsBegin_;
+			elementsEnd = elementsEnd_;
+		}
+
+		[[nodiscard]] bool IsLeaf() const noexcept
+		{
+			return splitAxis < 0;
+		}
+
+		[[nodiscard]] int GetLowChild() const noexcept
+		{
+			return !IsLeaf() ? lowChild : -1;
+		}
+
+		[[nodiscard]] int GetHighChild() const noexcept
+		{
+			return !IsLeaf() ? highChild : -1;
+		}
+
+		[[nodiscard]] bool IsAxisLocked(int axis) const noexcept
 		{
 			if constexpr (IsSpecialization<SpatialKeyType, Box>)
 			{
-				return boxData.lockedAxesMask.test(axis);
+				return (boxData.lockedAxesMask & (1 << axis)) != 0;
 			}
 			else
 			{
@@ -349,14 +612,45 @@ namespace GeoToolbox
 			}
 		}
 
-		[[nodiscard]] IndexType GetElementCount() const noexcept
+		[[nodiscard]] IndexType GetElementsCount() const noexcept
 		{
-			return elementsEnd - elementsBegin;
+			return IsLeaf() ? elementsEnd - elementsBegin : 0;
 		}
 
 		[[nodiscard]] bool HasElements() const noexcept
 		{
-			return GetElementCount() > 0;
+			return GetElementsCount() > 0;
+		}
+
+		[[nodiscard]] IndexType GetFirstElement() const noexcept
+		{
+			return IsLeaf() ? elementsBegin : -1;
+		}
+
+		[[nodiscard]] int GetFirstChild() const
+		{
+			if (IsLeaf())
+			{
+				return -1;
+			}
+
+			if constexpr (KeyIsBox)
+			{
+				return lowChild >= 0 ? lowChild
+					: highChild >= 0 ? highChild
+					: boxData.middleChild;
+			}
+			else
+			{
+				return lowChild >= 0 ? lowChild : highChild;
+			}
+		}
+
+		void Split(int axis, int lowChild_, int highChild_)
+		{
+			splitAxis = char(axis);
+			lowChild = lowChild_;
+			highChild = highChild_;
 		}
 	};
 
@@ -401,7 +695,7 @@ namespace GeoToolbox
 
 		[[nodiscard]] NodeIterator GetLowChild() const
 		{
-			return { *tree_, GetNode().lowChild };
+			return { *tree_, GetNode().GetLowChild() };
 		}
 
 		[[nodiscard]] NodeIterator GetMiddleChild() const
@@ -411,23 +705,13 @@ namespace GeoToolbox
 
 		[[nodiscard]] NodeIterator GetHighChild() const
 		{
-			return { *tree_, GetNode().highChild };
+			return { *tree_, GetNode().GetHighChild() };
 		}
 
 		[[nodiscard]] int GetFirstChild() const
 		{
 			DEBUG_ASSERT(IsValid());
-			auto const& node = GetNode();
-			if constexpr (KeyIsBox)
-			{
-				return node.lowChild >= 0 ? node.lowChild
-					: node.highChild >= 0 ? node.highChild
-					: node.boxData.middleChild;
-			}
-			else
-			{
-				return node.lowChild >= 0 ? node.lowChild : node.highChild;
-			}
+			return GetNode().GetFirstChild();
 		}
 
 		[[nodiscard]] int GetNextSibling() const
@@ -530,7 +814,8 @@ namespace GeoToolbox
 		{
 			if (this->IsValid())
 			{
-				elementIndex_ = this->tree_->nodes_[this->nodeIndex_].elementsBegin;
+				AddQueryStats_VisitedNodesCount();
+				elementIndex_ = this->tree_->nodes_[this->nodeIndex_].GetFirstElement();
 				MoveToNextValid();
 			}
 		}
@@ -569,13 +854,19 @@ namespace GeoToolbox
 		{
 			for (;;)
 			{
-				for (; elementIndex_ < this->GetNode().elementsEnd; ++elementIndex_)
+				auto const& node = this->GetNode();
+				if (node.IsLeaf())
 				{
-					AddQueryStats_ObjectOverlapsCount();
-					if (Overlap(range_, TTraits::GetSpatialKey(operator*())))
+					for (; elementIndex_ < node.elementsEnd; ++elementIndex_)
 					{
-						return;
+						AddQueryStats_ObjectTestsCount();
+						if (Overlap(range_, this->tree_->traits_.GetSpatialKey(operator*())))
+						{
+							return;
+						}
 					}
+
+					this->down_ = false;
 				}
 
 				for (;;)
@@ -606,16 +897,71 @@ namespace GeoToolbox
 					}
 				}
 
-				this->elementIndex_ = this->GetNode().elementsBegin;
+				AddQueryStats_VisitedNodesCount();
+				this->elementIndex_ = this->GetNode().GetFirstElement();
 			}
 		}
 	};
 
 
 	template <typename TElement, class TTraits, class TElementAllocator>
-	auto BoxTreeStatic<TElement, TTraits, TElementAllocator>::BeginRangeQuery(NodeIterator startRoot, BoxType const& range) const -> RangeQueryIterator
+	template <class TVisitor>
+	void BoxTreeStatic<TElement, TTraits, TElementAllocator>::VisitSubTree(int nodeIndex, TVisitor&& visitor) const
 	{
-		return RangeQueryIterator{ startRoot, range };
+		while (nodeIndex >= 0)
+		{
+			auto const& node = nodes_[nodeIndex];
+
+			if (node.IsLeaf())
+			{
+				AddQueryStats_VisitedNodesCount();
+				for (auto elementIndex = node.elementsBegin; elementIndex < node.elementsEnd; ++elementIndex)
+				{
+					visitor(elements_[elementIndex]);
+				}
+
+				return;
+			}
+
+			nodeIndex = -1;
+			if (node.lowChild >= 0)
+			{
+				nodeIndex = node.lowChild;
+			}
+
+			if constexpr (KeyIsBox)
+			{
+				if (node.boxData.middleChild >= 0)
+				{
+					if (nodeIndex >= 0)
+					{
+						VisitSubTree(node.boxData.middleChild, visitor);
+					}
+					else
+					{
+						nodeIndex = node.boxData.middleChild;
+					}
+				}
+			}
+
+			if (node.highChild >= 0)
+			{
+				if (nodeIndex >= 0)
+				{
+					VisitSubTree(node.highChild, visitor);
+				}
+				else
+				{
+					nodeIndex = node.highChild;
+				}
+			}
+		}
+	}
+
+	template <typename TElement, class TTraits, class TElementAllocator>
+	auto BoxTreeStatic<TElement, TTraits, TElementAllocator>::BeginRangeQuery(BoxType const& range) const -> RangeQueryIterator
+	{
+		return RangeQueryIterator{ GetRootNode(), range };
 	}
 
 	template <typename TElement, class TTraits, class TElementAllocator>
@@ -624,7 +970,7 @@ namespace GeoToolbox
 		elements_ = std::move(elements);
 		nodes_.clear();
 		nodes_.reserve(std::max(size_t(4), elements_.size() / maxElementsPerNode_ / 2));
-		nodes_.emplace_back(Node{ -1, -1, -1, 0, int(Size(elements_)), Bound(elements_, TTraits::GetSpatialKey) });
+		nodes_.emplace_back(Node{ IndexType(Size(elements_)), Bound(elements_) });
 		if (!IsEmpty())
 		{
 			Build();
@@ -635,147 +981,177 @@ namespace GeoToolbox
 	void BoxTreeStatic<TElement, TTraits, TElementAllocator>::Build()
 	{
 		using TempAllocator = typename std::allocator_traits<TElementAllocator>::template rebind_alloc<int>;
-		std::vector<int, TempAllocator> nodeQueue{ TempAllocator{ elements_.get_allocator() } };
-		nodeQueue.reserve(16);
-		nodeQueue.push_back(0);
+		std::vector<int, TempAllocator> nodeStack{ TempAllocator{ elements_.get_allocator() } };
+		nodeStack.reserve(16);
+		nodeStack.push_back(0);
 
-		while (!nodeQueue.empty())
+		while (!nodeStack.empty())
 		{
-			auto const currentNodeIndex = nodeQueue.back();
-			nodeQueue.pop_back();
-			SplitNode(currentNodeIndex);
+			auto const currentNodeIndex = nodeStack.back();
+			nodeStack.pop_back();
+			if (!SplitNode(currentNodeIndex))
+			{
+				continue;
+			}
+
 			auto const& currentNode = nodes_[currentNodeIndex];
 			if (currentNode.lowChild >= 0)
 			{
-				nodeQueue.push_back(currentNode.lowChild);
+				nodeStack.push_back(currentNode.lowChild);
 			}
 
 			if constexpr (KeyIsBox)
 			{
 				if (currentNode.boxData.middleChild >= 0)
 				{
-					nodeQueue.push_back(currentNode.boxData.middleChild);
+					nodeStack.push_back(currentNode.boxData.middleChild);
 				}
 			}
 
 			if (currentNode.highChild >= 0)
 			{
-				nodeQueue.push_back(currentNode.highChild);
+				nodeStack.push_back(currentNode.highChild);
 			}
 		}
 	}
 
 	template <typename TElement, class TTraits, class TElementAllocator>
-	void BoxTreeStatic<TElement, TTraits, TElementAllocator>::SplitNode(int nodeIndex)
+	bool BoxTreeStatic<TElement, TTraits, TElementAllocator>::SplitNode(int nodeIndex)
 	{
-		auto node = nodes_.data() + nodeIndex;
-		auto const elementCount = node->GetElementCount();
-		if (elementCount <= maxElementsPerNode_)
+		auto& node = nodes_[nodeIndex];
+		auto const elementsCount = node.GetElementsCount();
+		if (elementsCount <= maxElementsPerNode_)
 		{
-			return;
+			return false;
 		}
 
 		// Pick splitting axis
-		auto sizes = VectorTraitsType::ToArray(node->box.Sizes());
-		auto maxSize = ScalarType(0);
-		auto splitAxis = -1;
-		for (auto axisIndex = 0; axisIndex < int(VectorTraitsType::Dimensions); ++axisIndex)
+		auto const sizes = node.box.Sizes();
+		if constexpr (!KeyIsBox)
 		{
-			if (sizes[axisIndex] > maxSize && !node->IsAxisLocked(axisIndex))
-			{
-				maxSize = sizes[axisIndex];
-				splitAxis = axisIndex;
-			}
-		}
-
-		if (splitAxis < 0)
-		{
-			return;
-		}
-
-		auto splitPosition = node->box.Min()[splitAxis] + maxSize / 2;
-		auto lowCount = 0, highCount = 0;
-		if constexpr (KeyIsBox)
-		{
-			std::tie(lowCount, highCount) = PartitionBoxes(*node, splitAxis, splitPosition);
+			auto const [size, axis] = VectorTraitsType::MaximumValue(sizes);
+			return SplitNode(nodeIndex, int(axis), node.box.Min()[axis] + size / 2);
 		}
 		else
 		{
-			lowCount = PartitionPoints(*node, splitAxis, splitPosition);
-			highCount = elementCount - lowCount;
+			auto splitAxis = -1;
+			auto maxSize = ScalarType(0);
+			for (auto axisIndex = 0; axisIndex < int(VectorTraitsType::Dimensions); ++axisIndex)
+			{
+				if (sizes[axisIndex] > maxSize && !node.IsAxisLocked(axisIndex))
+				{
+					maxSize = sizes[axisIndex];
+					splitAxis = axisIndex;
+				}
+			}
+
+			return splitAxis >= 0 && SplitNode(nodeIndex, splitAxis, node.box.Min()[splitAxis] + maxSize / 2);
+		}
+	}
+
+	template <typename TElement, class TTraits, class TElementAllocator>
+	bool BoxTreeStatic<TElement, TTraits, TElementAllocator>::SplitNode(int nodeIndex, int splitAxis, ScalarType splitPosition)
+	{
+		auto node = nodes_.data() + nodeIndex;
+		auto const elementsCount = node->GetElementsCount();
+
+		auto [lowCount, highCount] = Partition(*node, splitAxis, splitPosition);
+
+		if constexpr (KeyIsBox)
+		{
+			if (lowCount + highCount < (elementsCount + 3) / 4)
+			{
+				return false;
+			}
+		}
+
+		int lowChild, highChild;
+		if (lowCount > 0)
+		{
+			BoxType newBox;
+			if constexpr (NewBoxStrategy == 0)
+			{
+				auto highEnd = node->box.Max();
+				highEnd[splitAxis] = splitPosition;
+				newBox = BoxType{ node->box.Min(), highEnd };
+			}
+			else if constexpr (NewBoxStrategy == 1)
+			{
+				newBox = node->box;
+				ReduceBoxAtHighEnd(newBox, node->elementsBegin, lowCount, splitAxis);
+			}
+			else
+			{
+				newBox = Bound(Span{ elements_.data() + node->elementsBegin, lowCount });
+			}
+
+			lowChild = int(nodes_.size());
+			nodes_.emplace_back(Node{ nodeIndex, node->elementsBegin, node->elementsBegin + lowCount, newBox });
+			node = nodes_.data() + nodeIndex;
+		}
+		else
+		{
+			lowChild = -1;
 		}
 
 		if constexpr (KeyIsBox)
 		{
-			if (lowCount + highCount < (elementCount + 3) / 4)
+			auto const middleCount = elementsCount - lowCount - highCount;
+			if (middleCount > 0)
 			{
-				return;
-			}
-		}
+				BoxType newBox;
+				if constexpr (NewBoxStrategy < 2)
+				{
+					newBox = node->box;
+					ReduceBoxAtLowEnd(newBox, node->elementsBegin + lowCount, middleCount, splitAxis);
+					ReduceBoxAtHighEnd(newBox, node->elementsBegin + lowCount, middleCount, splitAxis);
+				}
+				else
+				{
+					newBox = Bound(Span{ elements_.data() + node->elementsBegin + lowCount, middleCount });
+				}
 
-		node->splitAxis = char(splitAxis);
-		node->splitPosition = splitPosition;
-		if (lowCount > 0)
-		{
-			//auto const& box = Bound(Span{ elements_.data() + node->elementsBegin, lowCount }, TTraits::GetSpatialKey);
-			auto box = node->box;
-			ReduceBoxRight(box, node->elementsBegin, lowCount, splitAxis);
-			//auto highEnd = node->box.Max();
-			//highEnd[splitAxis] = splitPosition;
-			//auto const box = BoxType{ node->box.Min(), highEnd };
-			node->lowChild = int(nodes_.size());
-			nodes_.emplace_back(Node{ nodeIndex, -1, -1, node->elementsBegin, node->elementsBegin + lowCount, box });
-			node = nodes_.data() + nodeIndex;
+				node->boxData.middleChild = int(nodes_.size());
+				auto& middleNode = nodes_.emplace_back(Node{ nodeIndex, node->elementsBegin + lowCount, node->elementsEnd - highCount, newBox });
+				middleNode.boxData.lockedAxesMask |= 1 << splitAxis;
+				node = nodes_.data() + nodeIndex;
+			}
 		}
 
 		if (highCount > 0)
 		{
-			//auto const& box = Bound(Span{ elements_.data() + node->elementsEnd - highCount, highCount }, TTraits::GetSpatialKey);
-			auto box = node->box;
-			ReduceBoxLeft(box, node->elementsEnd - highCount, highCount, splitAxis);
-			//auto lowEnd = node->box.Min();
-			//lowEnd[splitAxis] = splitPosition;
-			//auto const box = BoxType{ lowEnd, node->box.Max() };
-			node->highChild = int(nodes_.size());
-			nodes_.emplace_back(Node{ nodeIndex, -1, -1, node->elementsEnd - highCount, node->elementsEnd, box });
-			node = nodes_.data() + nodeIndex;
-		}
-
-		if constexpr (KeyIsBox)
-		{
-			auto const middleCount = elementCount - lowCount - highCount;
-			if (middleCount > 0 && middleCount <= maxElementsPerNode_)
+			BoxType newBox;
+			if constexpr (NewBoxStrategy == 0)
 			{
-				node->elementsBegin += lowCount;
-				node->elementsEnd -= highCount;
-				//node->box = Bound(Span{ elements_.data() + node->elementsBegin, middleCount }, TTraits::GetSpatialKey);
+				auto lowEnd = node->box.Min();
+				lowEnd[splitAxis] = splitPosition;
+				newBox = BoxType{ lowEnd, node->box.Max() };
+			}
+			else if constexpr (NewBoxStrategy == 1)
+			{
+				newBox = node->box;
+				ReduceBoxAtLowEnd(newBox, node->elementsEnd - highCount, highCount, splitAxis);
 			}
 			else
 			{
-				//node->box = {};
-				if (middleCount > 0)
-				{
-					node->boxData.middleChild = int(nodes_.size());
-					//auto const& box = Bound(Span{ elements_.data() + node->elementsBegin + lowCount, middleCount }, TTraits::GetSpatialKey);
-					auto box = node->box;
-					ReduceBoxLeft(box, node->elementsBegin + lowCount, middleCount, splitAxis);
-					ReduceBoxRight(box, node->elementsBegin + lowCount, middleCount, splitAxis);
-					auto& middleNode = nodes_.emplace_back(Node{ nodeIndex, -1, -1, node->elementsBegin + lowCount, node->elementsEnd - highCount, box });
-					middleNode.boxData.lockedAxesMask.set(splitAxis);
-					node = nodes_.data() + nodeIndex;
-				}
-
-				node->elementsBegin = node->elementsEnd = -1;
+				newBox = Bound(Span{ elements_.data() + node->elementsEnd - highCount, highCount });
 			}
+
+			highChild = int(nodes_.size());
+			nodes_.emplace_back(Node{ nodeIndex, node->elementsEnd - highCount, node->elementsEnd, newBox });
+			node = nodes_.data() + nodeIndex;
 		}
 		else
 		{
-			node->elementsBegin = node->elementsEnd = -1;
+			highChild = -1;
 		}
+
+		node->Split(splitAxis, lowChild, highChild);
+		return true;
 	}
 
 	template <typename TElement, class TTraits, class TElementAllocator>
-	auto BoxTreeStatic<TElement, TTraits, TElementAllocator>::PartitionPoints(Node const& node, int splitAxis, ScalarType splitPosition) -> IndexType
+	auto BoxTreeStatic<TElement, TTraits, TElementAllocator>::PartitionPoints(Node const& node, int splitAxis, ScalarType splitPosition) -> std::pair<IndexType, IndexType>
 	{
 		using std::swap;
 
@@ -786,7 +1162,7 @@ namespace GeoToolbox
 		{
 			for (; currentLow <= currentHigh; ++currentLow)
 			{
-				auto const& key = TTraits::GetSpatialKey(elements_[currentLow]);
+				auto const& key = traits_.GetSpatialKey(elements_[currentLow]);
 				if (key[splitAxis] >= splitPosition)
 				{
 					break;
@@ -795,7 +1171,7 @@ namespace GeoToolbox
 
 			for (; currentLow <= currentHigh; --currentHigh)
 			{
-				auto const& key = TTraits::GetSpatialKey(elements_[currentHigh]);
+				auto const& key = traits_.GetSpatialKey(elements_[currentHigh]);
 				if (key[splitAxis] < splitPosition)
 				{
 					break;
@@ -815,7 +1191,7 @@ namespace GeoToolbox
 			}
 		}
 
-		return currentLow - node.elementsBegin;
+		return { currentLow - node.elementsBegin, node.elementsEnd - currentLow };
 	}
 
 	template <typename TElement, class TTraits, class TElementAllocator>
@@ -830,7 +1206,7 @@ namespace GeoToolbox
 		{
 			for (; currentLow <= currentHigh; ++currentLow)
 			{
-				auto const& box = TTraits::GetSpatialKey(elements_[currentLow]);
+				auto const& box = traits_.GetSpatialKey(elements_[currentLow]);
 				if (box.Min()[splitAxis] >= splitPosition)
 				{
 					break;
@@ -850,7 +1226,7 @@ namespace GeoToolbox
 			// either one is true: element at currentLow is H, or currentLow > currentHigh
 			for (; currentLow < currentHigh; --currentHigh)
 			{
-				auto const& box = TTraits::GetSpatialKey(elements_[currentHigh]);
+				auto const& box = traits_.GetSpatialKey(elements_[currentHigh]);
 				if (box.Max()[splitAxis] < splitPosition)
 				{
 					break;
@@ -921,73 +1297,97 @@ namespace GeoToolbox
 		return { lowEnd - node.elementsBegin, node.elementsEnd - 1 - highEnd };
 	}
 
-	template <typename TElement, class TTraits, class TElementAllocator>
-	auto BoxTreeStatic<TElement, TTraits, TElementAllocator>::QueryNearest(VectorType const& targetLocation, int nearestCount, ScalarType maxDistance) const -> std::vector<std::pair<IndexType, ScalarType>>
+
+	struct BoxTreeStats
 	{
-		ASSERT(nearestCount > 0 || maxDistance > 0);
+		int maxHeight;
+		AggregateStats<int> elementsPerNode;
+		AggregateStats<double> middlePercent;
+		AggregateStats<int> heightBalance;
+		AggregateStats<int> elementsCountBalance;
+	};
 
-		std::vector<std::pair<IndexType, ScalarType>> result;
-		if (nearestCount > 0)
+	template <typename TElement, class TTraits>
+	BoxTreeStats CalcStats(BoxTreeStatic<TElement, TTraits> const& tree)
+	{
+		constexpr auto spatialKeyIsBox = SpatialKeyIsBox<typename BoxTreeStatic<TElement, TTraits>::SpatialKeyType>;
+
+		struct NodeStats
 		{
-			result.reserve(nearestCount);
+			int depth = 0, height = 1, totalElements = 0;
+		};
+
+		BoxTreeStats result;
+
+		std::vector<NodeStats> stats(tree.GetNodesCount());
+		auto nodeIndex = 0;
+		auto const nodes = tree.Nodes();
+		for (auto const& node : nodes)
+		{
+			stats[nodeIndex].depth = node.parent < 0 ? 1 : stats[node.parent].depth + 1;
+			++nodeIndex;
 		}
 
-		auto worstDistance2 = maxDistance > 0 ? Square(maxDistance) : std::numeric_limits<ScalarType>::max();
-		auto nodeIndex = !nodes_.empty() ? 0 : -1;
-		auto down = true;
-
-		while (nodeIndex >= 0)
-		{
-			auto const end = nodes_[nodeIndex].elementsEnd;
-			for (auto elementIndex = nodes_[nodeIndex].elementsBegin; elementIndex < end; ++elementIndex)
+		nodeIndex = int(nodes.size());
+		std::array<int, 3> children{};
+		auto childrenCount = 0;
+		auto const addChild = [&](int childIndex)
 			{
-				auto const distance2 = GetDistanceSquared(targetLocation, TTraits::GetSpatialKey(elements_[elementIndex]));
-				if (distance2 <= worstDistance2)
+				if (childIndex >= 0)
 				{
-					if (nearestCount > 0 && Size(result) == nearestCount)
-					{
-						result.erase(--result.end());
-					}
-
-					auto position = std::lower_bound(result.begin(), result.end(), distance2, [](auto const& pair, ScalarType v) { return pair.second < v; });
-					result.emplace(position, elementIndex, distance2);
-					if (nearestCount > 0 && Size(result) == nearestCount)
-					{
-						worstDistance2 = result.back().second;
-					}
+					children[childrenCount++] = childIndex;
 				}
+			};
+
+		for (auto const& node : ReverseIterable(nodes))
+		{
+			--nodeIndex;
+			auto& s = stats[nodeIndex];
+			childrenCount = 0;
+			addChild(node.GetLowChild());
+			addChild(node.GetHighChild());
+			if constexpr (spatialKeyIsBox)
+			{
+				addChild(node.boxData.middleChild);
 			}
 
-			for (;;)
+			s.height = 1;
+			auto middleCount = s.totalElements = node.GetElementsCount();
+			if (childrenCount == 0) // For elementsPerNode only take into account leaf nodes
 			{
-				if (down)
+				result.elementsPerNode.AddValue(s.totalElements);
+			}
+
+			for (auto i = 0; i < childrenCount; ++i)
+			{
+				auto const& childStats = stats[children[i]];
+				s.height = std::max(s.height, childStats.height + 1);
+				s.totalElements += childStats.totalElements;
+			}
+
+			if (childrenCount > 0) // For balances and middlePercent only take into account non-leaf nodes
+			{
+				auto const lowChild = node.GetLowChild();
+				auto const highChild = node.GetHighChild();
+				auto const lowHeight = lowChild >= 0 ? stats[lowChild].height : 0;
+				auto const lowCount = lowChild >= 0 ? stats[lowChild].totalElements : 0;
+				auto const highHeight = highChild >= 0 ? stats[highChild].height : 0;
+				auto const highCount = highChild >= 0 ? stats[highChild].totalElements : 0;
+				result.heightBalance.AddValue(lowHeight - highHeight);
+				result.elementsCountBalance.AddValue(lowCount - highCount);
+				if constexpr (spatialKeyIsBox)
 				{
-					auto const child = GetFirstChildNear(nodeIndex, targetLocation, worstDistance2);
-					if (child >= 0)
+					if (node.boxData.middleChild >= 0)
 					{
-						nodeIndex = child;
-						break;
+						middleCount += stats[node.boxData.middleChild].totalElements;
 					}
-				}
 
-				auto const sibling = GetNextSiblingNear(nodeIndex, targetLocation, worstDistance2);
-				if (sibling >= 0)
-				{
-					nodeIndex = sibling;
-					down = true;
-					break;
+					result.middlePercent.AddValue(middleCount * 100.0 / s.totalElements);
 				}
-
-				nodeIndex = nodes_[nodeIndex].parent;
-				if (nodeIndex < 0)
-				{
-					break;
-				}
-
-				down = false;
 			}
 		}
 
+		result.maxHeight = stats.front().height;
 		return result;
 	}
 }

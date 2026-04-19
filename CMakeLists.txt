@@ -1,4 +1,4 @@
-# Copyright 2024-2025 Ivan Kolev
+# Copyright 2024-2026 Ivan Kolev
 #
 # Distributed under the Boost Software License, Version 1.0.
 # (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -8,8 +8,10 @@ cmake_minimum_required( VERSION 3.18 )
 project( GeoToolbox )
 
 include( CMakeDependentOption )
+include( CMakePrintHelpers )
 include( FetchContent )
 
+set( CMAKE_C_STANDARD 11 )
 set( CMAKE_CXX_STANDARD 17 )
 set( CMAKE_CXX_STANDARD_REQUIRED ON )
 set( CMAKE_CXX_EXTENSIONS off )
@@ -17,31 +19,31 @@ if( MSVC )
 	set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /JMC" )
 endif()
 
-# message( STATUS "CMAKE_GENERATOR: " ${CMAKE_GENERATOR} )
-# message( STATUS "CMAKE_GENERATOR_TOOLSET: " ${CMAKE_GENERATOR_TOOLSET} )
-# message( STATUS "CMAKE_GENERATOR_PLATFORM: " ${CMAKE_GENERATOR_PLATFORM} )
-# message( STATUS "CMAKE_CXX_COMPILER: " ${CMAKE_CXX_COMPILER} )
-# message( STATUS "CMAKE_CXX_COMPILER_ID: " ${CMAKE_CXX_COMPILER_ID} )
-# message( STATUS "CMAKE_CXX_COMPILER_VERSION: " ${CMAKE_CXX_COMPILER_VERSION} )
-# message( STATUS "CMAKE_CXX_COMPILER_VERSION_INTERNAL: " ${CMAKE_CXX_COMPILER_VERSION_INTERNAL} )
-# message( STATUS "CMAKE_CXX_COMPILER_ARCHITECTURE_ID: " ${CMAKE_CXX_COMPILER_ARCHITECTURE_ID} )
-# message( STATUS "CMAKE_SYSTEM_NAME: " ${CMAKE_SYSTEM_NAME} )
-# message( STATUS "CMAKE_SYSTEM_PROCESSOR: " ${CMAKE_SYSTEM_PROCESSOR} )
-# message( DEBUG "CMAKE_SIZEOF_VOID_P: " ${CMAKE_SIZEOF_VOID_P} )
-# message( VERBOSE "CMAKE_EXE_LINKER_FLAGS: " ${CMAKE_EXE_LINKER_FLAGS} )
+option( GeoToolbox_VERBOSE "Print verbose messages during CMake Configure step" OFF )
+
+if( GeoToolbox_VERBOSE )
+	cmake_print_variables( CMAKE_GENERATOR CMAKE_GENERATOR_TOOLSET CMAKE_GENERATOR_PLATFORM )
+	cmake_print_variables( CMAKE_CXX_COMPILER CMAKE_CXX_COMPILER_ID CMAKE_CXX_COMPILER_VERSION CMAKE_CXX_COMPILER_VERSION_INTERNAL CMAKE_CXX_COMPILER_ARCHITECTURE_ID )
+	cmake_print_variables( CMAKE_SYSTEM_NAME CMAKE_SYSTEM_PROCESSOR CMAKE_SIZEOF_VOID_P )
+	cmake_print_variables( CMAKE_EXE_LINKER_FLAGS )
+endif()
 
 set_property( GLOBAL PROPERTY USE_FOLDERS ON )
 
-option( BUILD_TESTS "Build tests" OFF )
-cmake_dependent_option( BUILD_TESTS_PERFORMANCE "Performance tests" ON "BUILD_TESTS" ON )
-option( ENABLE_CODEANALYSIS "Enable code analysis tools in Release build" ON )
-option( ENABLE_EIGEN "Use Eigen for linear algebra" OFF )
-option( ENABLE_LODEPNG "Include LodePNG for PNG image writing" OFF )
-option( ENABLE_SHAPEFILE "Include ESRI Shapefile reader" OFF )
+option( GeoToolbox_BUILD_TESTS "Build tests" OFF )
+cmake_dependent_option( GeoToolbox_BUILD_TESTS_PERFORMANCE "Build performance tests" ON "GeoToolbox_BUILD_TESTS" OFF )
+option( GeoToolbox_ENABLE_CODEANALYSIS "Enable code analysis tools in Release build" ON )
+option( GeoToolbox_ENABLE_EIGEN "Use Eigen for linear algebra (tested long ago, may not work currently)" OFF )
+option( GeoToolbox_ENABLE_LODEPNG "Include LodePNG for PNG image writing (enforced by GeoToolbox_BUILD_TESTS_PERFORMANCE)" OFF )
+option( GeoToolbox_ENABLE_SHAPEFILE "Include ESRI Shapefile to load datasets from and export results to SHP files (enforced by GeoToolbox_BUILD_TESTS_PERFORMANCE)" OFF )
 
-if( BUILD_TESTS_PERFORMANCE )
-	set( ENABLE_LODEPNG ON CACHE INTERNAL "" )
-	set( ENABLE_SHAPEFILE ON CACHE INTERNAL "" )
+if( GeoToolbox_BUILD_TESTS_PERFORMANCE )
+	set( GeoToolbox_ENABLE_LODEPNG ON CACHE INTERNAL "" )
+	set( GeoToolbox_ENABLE_SHAPEFILE ON CACHE INTERNAL "" )
+endif()
+
+if( GeoToolbox_VERBOSE )
+	cmake_print_variables( GeoToolbox_ENABLE_LODEPNG GeoToolbox_ENABLE_SHAPEFILE )
 endif()
 
 if( MSVC )
@@ -79,7 +81,7 @@ endif()
 
 # LodePNG - 2024-04-15
 
-if( ENABLE_LODEPNG )
+if( GeoToolbox_ENABLE_LODEPNG )
 	set( LodePNG_Changeset ed3c5f14b136c936d615ee3b38aaa7e7e642f12c )
 	if( NOT EXISTS ${FETCHCONTENT_BASE_DIR}/lodepng )
 		file(
@@ -97,7 +99,7 @@ endif()
 
 # Shapefile
 
-if ( ENABLE_SHAPEFILE )
+if ( GeoToolbox_ENABLE_SHAPEFILE )
 	set( ShapelibVersion 1.5.0 )
 	file(
 		DOWNLOAD https://download.osgeo.org/shapelib/shapelib-${ShapelibVersion}.zip ${FETCHCONTENT_BASE_DIR}/shapelib-${ShapelibVersion}.zip
@@ -118,7 +120,7 @@ endif()
 
 # Eigen
 
-if( ENABLE_EIGEN )
+if( GeoToolbox_ENABLE_EIGEN )
 	file(
 		DOWNLOAD https://gitlab.com/libeigen/eigen/-/archive/3.4/eigen-3.4.zip ${FETCHCONTENT_BASE_DIR}/eigen-3.4.zip
 		SHOW_PROGRESS
@@ -144,25 +146,30 @@ add_library( GeoToolbox
 	${HeadersDir}/Span.hpp
 	${HeadersDir}/SpatialTools.hpp
 	${HeadersDir}/StlExtensions.hpp
+	${HeadersDir}/TestTools.hpp
 
 	${HeadersDir}/GeoToolbox.natvis
 	
 	Readme.md
 )
 
+if( MSVC )
+	target_sources( GeoToolbox PRIVATE MsvcAnalysis.ruleset )
+endif()
+
 target_link_libraries( GeoToolbox PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance )
-if ( ENABLE_EIGEN )
+if ( GeoToolbox_ENABLE_EIGEN )
 	target_link_libraries( GeoToolbox PUBLIC Eigen3 )
 	target_compile_definitions( GeoToolbox PUBLIC ENABLE_EIGEN )
 	if( WIN32 )
 		target_sources( GeoToolbox PRIVATE ${FETCHCONTENT_BASE_DIR}/eigen-3.4/debug/msvc/eigen.natvis )
 	endif()
 endif()
-if ( ENABLE_LODEPNG )
+if ( GeoToolbox_ENABLE_LODEPNG )
 	target_link_libraries( GeoToolbox PRIVATE GeoToolbox.LodePNG )
 	target_compile_definitions( GeoToolbox PRIVATE ENABLE_LODEPNG )
 endif()
-if ( ENABLE_SHAPEFILE )
+if ( GeoToolbox_ENABLE_SHAPEFILE )
 	target_sources( GeoToolbox PRIVATE ${HeadersDir}/ShapeFile.hpp src/ShapeFile.cpp )
 	target_link_libraries( GeoToolbox PRIVATE GeoToolbox.Shapefile )
 endif()
@@ -180,13 +187,15 @@ option( DATASET_Maricopa_Streets "290K lines, https://hub.arcgis.com/datasets/db
 # option( DATASET_Miami_Dade_Property_Boundary "500K parcels, https://hub.arcgis.com/maps/ed0468f5e579464b84727a4ab614fd40" OFF )
 # option( DATASET_Miami_Dade_Property_Point "700K parcel points, https://hub.arcgis.com/maps/bf92e51f90a8426cae904ebc15018067" OFF )
 # option( DATASET_Miami_Dade_Street "100K lines, https://hub.arcgis.com/datasets/a7e9449c8ec04bd39fb952e66e341442_0" OFF )
+option( DATASET_armadillo "49K points, 99K faces, https://github.com/alecjacobson/common-3d-test-models" OFF )
+option( DATASET_xyzrgb_dragon "124K points, 249K faces, https://github.com/alecjacobson/common-3d-test-models" OFF )
 
 set( _datasetDownloadDir ${CMAKE_CURRENT_BINARY_DIR}/../data )
 
-function( AddDataset _name _hash )
+function( AddDataset _name _hash _file )
 	#set( _baseUrl "https://ikolev21.github.io/datasets" )
 	set( _baseUrl "http://ikolev.com/files/Datasets" )
-	if( DATASET_${_name} )
+	if( DATASET_${_name} AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data/${_file} )
 		message( STATUS "Adding dataset ${_baseUrl}/${_name}.7z" )
 		file(
 			DOWNLOAD ${_baseUrl}/${_name}.7z ${_datasetDownloadDir}/${_name}.7z
@@ -199,11 +208,13 @@ function( AddDataset _name _hash )
 	endif()
 endfunction()
 
-AddDataset( Maricopa_Parcel_Points d0a47ec800d1d404a91edefc26bcc2e117c364aac3b7b3d28142649ae7e13ffe )
-AddDataset( Maricopa_Parcels dfbffe33a9e188e4510e6988fd7d90a39577370d6d1d912c8e69fe3a669b5749 )
-AddDataset( Maricopa_Streets 05e199d796e0ad527fbff09d918bfb1772c224edfaef8789fb3a466cdd448918 )
+AddDataset( Maricopa_Parcel_Points d0a47ec800d1d404a91edefc26bcc2e117c364aac3b7b3d28142649ae7e13ffe Maricopa_Parcel_Points.shp )
+AddDataset( Maricopa_Parcels dfbffe33a9e188e4510e6988fd7d90a39577370d6d1d912c8e69fe3a669b5749 Maricopa_Parcels.shp )
+AddDataset( Maricopa_Streets 05e199d796e0ad527fbff09d918bfb1772c224edfaef8789fb3a466cdd448918 Maricopa_Streets.shp )
+AddDataset( armadillo 70d03446bee3e2679fcf7038152aeabcf059e92e781108cb68d1b28c20749fa7 armadillo.obj )
+AddDataset( xyzrgb_dragon 2276eae5e9c9a81a47763a00bc484281abafaeedd833ba031a849af3118ce446 xyzrgb_dragon.obj )
 
 
-if( BUILD_TESTS )
+if( GeoToolbox_BUILD_TESTS )
 	add_subdirectory( test )
 endif()

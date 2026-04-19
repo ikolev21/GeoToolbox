@@ -1,4 +1,4 @@
-﻿// Copyright 2024-2025 Ivan Kolev
+﻿// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -35,14 +35,14 @@ namespace GeoToolbox
 
 		constexpr Span() = default;
 
-		constexpr Span(T* data, size_type count) noexcept(IsReleaseBuild)
+		constexpr Span(T* data, size_type count)
 			: data_{ data }
 			, count_{ count }
 		{
 			DEBUG_ASSERT(data == nullptr ? size() == 0 : size() >= 0);
 		}
 
-		constexpr Span(T* begin, T* end) noexcept(IsReleaseBuild)
+		constexpr Span(T* begin, T* end)
 			: data_{ begin }
 			, count_(size_type(end - begin))
 		{

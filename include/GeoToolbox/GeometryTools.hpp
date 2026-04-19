@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -19,6 +19,8 @@
 
 namespace GeoToolbox
 {
+	constexpr auto Pi = 3.141592653589793;
+
 	// Vector interface
 
 	// In addition to the operations in VectorTraits, all of which have default implementations in VectorTraitsDefault, the following operators must be implemented:
@@ -28,7 +30,7 @@ namespace GeoToolbox
 	{
 		static constexpr size_t Dimensions = 0;
 
-		using ScalarType = char;
+		using ScalarType = std::int8_t;
 
 		//static constexpr std::string_view Name = "...";
 
@@ -63,11 +65,17 @@ namespace GeoToolbox
 			((vector[Indices] = value), ...);
 		}
 
-		template <class TVector, class TUnaryOp, std::size_t... Indices>
-		constexpr TVector ComponentApplyImpl(TVector const& a, TUnaryOp op, std::index_sequence<Indices...>)
+		template <class TVector, std::size_t... Indices>
+		constexpr TVector FlatImpl(typename VectorTraits<TVector>::ScalarType value, std::index_sequence<Indices...>)
+		{
+			return TVector{ ( (void)Indices, value )... };
+		}
+
+		template <class TResult, class TVector, class TUnaryOp, std::size_t... Indices>
+		constexpr TResult ComponentApplyImpl(TVector const& a, TUnaryOp op, std::index_sequence<Indices...>)
 		{
 			using std::get;
-			return TVector{ op(VectorTraits<TVector>::template Get<Indices>(a)) ... };
+			return TResult{ op(VectorTraits<TVector>::template Get<Indices>(a)) ... };
 		}
 
 		template <class TVector, class TBinaryOp, std::size_t... Indices>
@@ -111,11 +119,14 @@ namespace GeoToolbox
 			Detail::FillImpl(vector, value, std::make_index_sequence<VectorTraits<TVector>::Dimensions>());
 		}
 
+		static constexpr TVector Zero()
+		{
+			return Detail::FlatImpl<TVector>(0, std::make_index_sequence<VectorTraits<TVector>::Dimensions>());
+		}
+
 		static constexpr TVector Flat(ScalarType value)
 		{
-			TVector vector{};
-			Detail::FillImpl(vector, value, std::make_index_sequence<VectorTraits<TVector>::Dimensions>());
-			return vector;
+			return Detail::FlatImpl<TVector>(value, std::make_index_sequence<VectorTraits<TVector>::Dimensions>());
 		}
 
 		static constexpr TVector OperatorAdd(TVector const& a, TVector const& b)
@@ -136,6 +147,16 @@ namespace GeoToolbox
 		static constexpr TVector OperatorSub(TVector const& a, TVector const& b)
 		{
 			return ComponentApply(a, b, [](auto x, auto y) { return x - y; });
+		}
+
+		static constexpr TVector OperatorMultiply(TVector const& a, TVector const& b)
+		{
+			return ComponentApply(a, b, [](auto x, auto y) { return x * y; });
+		}
+
+		static constexpr TVector OperatorDivide(TVector const& a, TVector const& b)
+		{
+			return ComponentApply(a, b, [](auto x, auto y) { return x / y; });
 		}
 
 		static constexpr TVector OperatorMultiplyByScalar(TVector const& v, ScalarType s)
@@ -180,6 +201,11 @@ namespace GeoToolbox
 			return std::pair{ *position, position - &a[0] };
 		}
 
+		static constexpr auto Sum(TVector const& a)
+		{
+			return std::accumulate(&a[0], &a[0] + VectorTraits<TVector>::Dimensions, ScalarType(0));
+		}
+
 		static constexpr auto DotProduct(TVector const& a, TVector const& b)
 		{
 			auto const ab = ComponentApply(a, b, [](auto x, auto y) { return x * y; });
@@ -193,7 +219,16 @@ namespace GeoToolbox
 
 		static ScalarType GetDistanceSquared(TVector const& a, TVector const& b)
 		{
-			return std::inner_product(a.begin(), a.end(), b.begin(), ScalarType(0), std::plus<ScalarType>{}, [](ScalarType a, ScalarType b) { return (a - b) * (a - b); });
+			// This may be an elegant one-liner, but VC++ won't vectorize it, in contrast to the loop below
+			//return std::inner_product(a.begin(), a.end(), b.begin(), ScalarType(0), std::plus<ScalarType>{}, [](ScalarType a, ScalarType b) { return Square(a - b); });
+
+			ScalarType result = 0;
+			for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
+			{
+				result += Square(a[i] - b[i]);
+			}
+
+			return result;
 		}
 	};
 
@@ -208,10 +243,25 @@ namespace GeoToolbox
 	template <typename TScalar, size_t NDimensions>
 	constexpr bool IsArrayVector<std::array<TScalar, NDimensions>> = VectorTraits<std::array<TScalar, NDimensions>>::Dimensions > 0;
 
+	template <typename T>
+	constexpr char GetFloatTypeCode()
+	{
+		if constexpr (std::is_same_v<T, float>)
+		{
+			return 'f';
+		}
+		else
+		{
+			static_assert(std::is_same_v<T, double>);
+			return 'd';
+		}
+	}
+
 	template <typename TScalar, size_t NDimensions>
 	struct VectorTraits<std::array<TScalar, NDimensions>> : VectorTraitsDefault<std::array<TScalar, NDimensions>, TScalar, NDimensions>
 	{
-		static constexpr std::string_view Name = "array";
+		static constexpr std::array NameArray = { 'a', 'r', 'r', 'a', 'y', char('0' + NDimensions), GetFloatTypeCode<TScalar>(), char(0) };
+		static constexpr std::string_view Name{ NameArray.data() };
 
 		static constexpr auto IsConstexpr = true;
 
@@ -222,11 +272,21 @@ namespace GeoToolbox
 	using Vector2 = Vector<double, 2>;
 	using Vector3 = Vector<double, 3>;
 	using Vector4 = Vector<double, 4>;
+	using Vector2f = Vector<float, 2>;
+	using Vector3f = Vector<float, 3>;
+	using Vector4f = Vector<float, 4>;
 
 	template <class TVector>
 	constexpr std::enable_if_t<IsArrayVector<TVector>, TVector> operator+(TVector const& a, TVector const& b)
 	{
 		return VectorTraits<TVector>::OperatorAdd(a, b);
+	}
+
+	template <class TVector>
+	constexpr std::enable_if_t<IsArrayVector<TVector>, TVector&> operator+=(TVector& a, TVector const& b)
+	{
+		a = a + b;
+		return a;
 	}
 
 	template <class TVector>
@@ -236,9 +296,23 @@ namespace GeoToolbox
 	}
 
 	template <class TVector>
+	constexpr std::enable_if_t<IsArrayVector<TVector>, TVector&> operator-=(TVector& a, TVector const& b)
+	{
+		a = a - b;
+		return a;
+	}
+
+	template <class TVector>
 	constexpr std::enable_if_t<IsArrayVector<TVector>, TVector> operator*(TVector const& v, typename VectorTraits<TVector>::ScalarType s)
 	{
 		return VectorTraits<TVector>::OperatorMultiplyByScalar(v, s);
+	}
+
+	template <class TVector>
+	constexpr std::enable_if_t<IsArrayVector<TVector>, TVector&> operator*=(TVector& v, typename VectorTraits<TVector>::ScalarType s)
+	{
+		v = v * s;
+		return v;
 	}
 
 	template <class TVector>
@@ -254,9 +328,10 @@ namespace GeoToolbox
 	}
 
 	template <class TVector>
-	constexpr std::enable_if_t<IsArrayVector<TVector>, TVector> operator/(typename VectorTraits<TVector>::ScalarType s, TVector const& v)
+	constexpr std::enable_if_t<IsArrayVector<TVector>, TVector&> operator/=(TVector& v, typename VectorTraits<TVector>::ScalarType s)
 	{
-		return VectorTraits<TVector>::OperatorDivideByScalar(v, s);
+		v = v / s;
+		return v;
 	}
 
 
@@ -266,7 +341,8 @@ namespace GeoToolbox
 	template <typename TScalar, size_t NDimensions>
 	struct VectorTraits<Eigen::Vector<TScalar, NDimensions>> : VectorTraitsDefault<Eigen::Vector<TScalar, NDimensions>, TScalar, NDimensions>
 	{
-		static constexpr std::string_view Name = "Eigen";
+		static constexpr std::array NameArray = { 'E', 'i', 'g', 'e', 'n', char('0' + NDimensions), GetFloatTypeCode<TScalar>(), char(0) };
+		static constexpr std::string_view Name{ NameArray.data() };
 
 		static constexpr auto IsConstexpr = false;
 
@@ -310,9 +386,9 @@ namespace GeoToolbox
 	// Operations with generic implementations, based on VectorTraits
 
 	template <class TVector>
-	constexpr void Fill(TVector& vector, typename VectorTraits<TVector>::ScalarType value)
+	constexpr TVector Zero()
 	{
-		VectorTraits<TVector>::Fill(vector, value);
+		return VectorTraits<TVector>::Zero();
 	}
 
 	template <class TVector>
@@ -327,10 +403,24 @@ namespace GeoToolbox
 		return Flat<TVector>(std::numeric_limits<typename VectorTraits<TVector>::ScalarType>::quiet_NaN());
 	}
 
+	template <class TVector>
+	constexpr void Fill(TVector& vector, typename VectorTraits<TVector>::ScalarType value)
+	{
+		VectorTraits<TVector>::Fill(vector, value);
+	}
+
 	template <class TVector, class TUnaryOp>
 	constexpr TVector ComponentApply(TVector const& a, TUnaryOp op)
 	{
-		return Detail::ComponentApplyImpl(a, std::forward<TUnaryOp>(op), std::make_index_sequence<VectorTraits<TVector>::Dimensions>());
+		return Detail::ComponentApplyImpl<TVector>(a, std::forward<TUnaryOp>(op), std::make_index_sequence<VectorTraits<TVector>::Dimensions>());
+	}
+
+	template <class TOtherVector, class TVector>
+	constexpr TOtherVector Convert(TVector const& a)
+	{
+		using ScalarType = typename VectorTraits<TVector>::ScalarType;
+		using OtherScalarType = typename VectorTraits<TOtherVector>::ScalarType;
+		return Detail::ComponentApplyImpl<TOtherVector>(a, [](ScalarType x) { return OtherScalarType(x); }, std::make_index_sequence<VectorTraits<TVector>::Dimensions>());
 	}
 
 	template <class TVector, class TBinaryOp>
@@ -358,6 +448,24 @@ namespace GeoToolbox
 	}
 
 	template <class TVector>
+	constexpr TVector ComponentMultiply(TVector const& a, TVector const& b)
+	{
+		return VectorTraits<TVector>::OperatorMultiply(a, b);
+	}
+
+	template <class TVector>
+	constexpr TVector ComponentDivide(TVector const& a, TVector const& b)
+	{
+		return VectorTraits<TVector>::OperatorDivide(a, b);
+	}
+
+	template <class TVector>
+	constexpr std::enable_if_t<IsArrayVector<TVector>, TVector> operator/(typename VectorTraits<TVector>::ScalarType s, TVector const& v)
+	{
+		return ComponentDivide(VectorTraits<TVector>::Flat(s), v);
+	}
+
+	template <class TVector>
 	constexpr auto LengthSquared(TVector const& a)
 	{
 		return VectorTraits<TVector>::LengthSquared(a);
@@ -375,6 +483,12 @@ namespace GeoToolbox
 		return VectorTraits<TVector>::MaximumValue(a);
 	}
 
+	template <class TVector>
+	constexpr auto Sum(TVector const& a)
+	{
+		return VectorTraits<TVector>::Sum(a);
+	}
+
 	// Segment, Interval, Box
 
 	template <class TVector>
@@ -386,24 +500,34 @@ namespace GeoToolbox
 	struct Interval
 	{
 		T min;
-		T max;
+		T max = min;
 	};
 
 	template <typename T>
 	T LinearInterpolate(Interval<T> const& interval, T t)
 	{
-		DEBUG_ASSERT(interval.min < interval.max);
+		DEBUG_ASSERT(interval.min <= interval.max);
 		return t <= 0 ? interval.min : t >= 1 ? interval.max : interval.min + t * (interval.max - interval.min);
 	}
+
+	template <typename T>
+	T ReInterpolate(T x, Interval<T> from, Interval<T> to)
+	{
+		DEBUG_ASSERT(from.min < from.max);
+		auto const t = (x - from.min) / (from.max - from.min);
+		return LinearInterpolate(to, t);
+	}
+
 
 	template <class TVector>
 	struct Box
 	{
 		static_assert(IsVector<TVector>, "Type is not a vector");
 
-		using ScalarType = typename VectorTraits<TVector>::ScalarType;
-
 		using VectorType = TVector;
+		using VectorTraitsType = VectorTraits<VectorType>;
+		using ScalarType = typename VectorTraitsType::ScalarType;
+		static constexpr auto Dimensions = VectorTraitsType::Dimensions;
 
 	private:
 
@@ -421,10 +545,16 @@ namespace GeoToolbox
 		{
 		}
 
-		constexpr Box(VectorType min, VectorType max) noexcept(IsReleaseBuild)
+		constexpr Box(VectorType min, VectorType max)
 			: ends_{ min, max }
 		{
 			DEBUG_ASSERT(AllOf(ends_[0], ends_[1], std::less_equal<>()));
+		}
+
+		template <class TBox>
+		static Box Convert( TBox const& other )
+		{
+			return { GeoToolbox::Convert<VectorType>( other.Min() ), GeoToolbox::Convert<VectorType>( other.Max() ) };
 		}
 
 		static constexpr Box Bound(VectorType a, VectorType b)
@@ -432,14 +562,36 @@ namespace GeoToolbox
 			return Box{ GeoToolbox::Min(a, b), GeoToolbox::Max(a, b) };
 		}
 
-		static constexpr Box FromMinAndSize(VectorType min, ScalarType size)
-		{
-			return Box{ min, min + Flat<VectorType>(size) };
-		}
-
 		static constexpr Box FromMinAndSizes(VectorType min, VectorType sizes)
 		{
 			return Box{ min, min + sizes };
+		}
+
+		static constexpr Box FromMinAndSize(VectorType min, ScalarType size)
+		{
+			return FromMinAndSizes(min, Flat<VectorType>(size));
+		}
+
+		static constexpr Box FromCenterAndSizes(VectorType center, VectorType sizes)
+		{
+			auto const radii = sizes / ScalarType(2);
+			return Box{ center - radii, center + radii };
+		}
+
+		static constexpr Box FromCenterAndSize(VectorType center, ScalarType size)
+		{
+			return FromCenterAndSizes(center, Flat<VectorType>(size));
+		}
+
+		static constexpr Box Square(ScalarType size)
+		{
+			return Box{ Zero<VectorType>(), Flat<VectorType>(size) };
+		}
+
+		[[nodiscard]] constexpr bool IsEmpty() const noexcept
+		{
+			// std::isnan turned constexpr only in C++23
+			return ends_[0][0] != ends_[0][0];
 		}
 
 		[[nodiscard]] constexpr VectorType const& Min() const noexcept
@@ -452,8 +604,9 @@ namespace GeoToolbox
 			return ends_[1];
 		}
 
-		[[nodiscard]] constexpr VectorType const& operator[](int i) const noexcept
+		[[nodiscard]] constexpr VectorType const& operator[](int i) const
 		{
+			DEBUG_ASSERT(i == 0 || i == 1);
 			return ends_[i];
 		}
 
@@ -482,15 +635,9 @@ namespace GeoToolbox
 			return Size(1);
 		}
 
-		[[nodiscard]] constexpr bool IsEmpty() const noexcept
-		{
-			// std::isnan got constexpr only in C++23
-			return ends_[0][0] != ends_[0][0];
-		}
-
 		Box& Add(VectorType const& point)
 		{
-			// this may be NaN, point not
+			// *this may be NaN, point may not
 			DEBUG_ASSERT(AllOf(point, [](auto x) { return !std::isnan(x); }));
 
 			// Can't use std::min/max here, this must work for empty boxes that use nan coordinates, hence the weird comparisons
@@ -508,6 +655,36 @@ namespace GeoToolbox
 			}
 
 			return *this;
+		}
+
+		Box& Move(VectorType const& point)
+		{
+			if (!IsEmpty())
+			{
+				ends_[0] += point;
+				ends_[1] += point;
+			}
+
+			return *this;
+		}
+
+		[[nodiscard]] constexpr Box GetReducedFromAbove(int axis, ScalarType newMaximum) const
+		{
+			auto newMax = ends_[1];
+			newMax[axis] = newMaximum;
+			return { ends_[0], newMax };
+		}
+
+		[[nodiscard]] constexpr Box GetReducedFromBelow(int axis, ScalarType newMinimum) const
+		{
+			auto newMin = ends_[0];
+			newMin[axis] = newMinimum;
+			return { newMin, ends_[1] };
+		}
+
+		constexpr Box GetScaled(ScalarType factor) const
+		{
+			return factor > 0 ? FromCenterAndSizes(Center(), Sizes() * factor) : *this;
 		}
 
 		friend constexpr Box operator+(Box const& box, VectorType const& point)
@@ -529,6 +706,8 @@ namespace GeoToolbox
 
 	using Box2 = Box<Vector2>;
 	using Box3 = Box<Vector3>;
+	using Box2f = Box<Vector2f>;
+	using Box3f = Box<Vector3f>;
 
 
 	template <typename T>
@@ -610,6 +789,20 @@ namespace GeoToolbox
 	}
 
 	template <class TVector>
+	[[nodiscard]] bool Contains(Box<TVector> const& a, Box<TVector> const& b) noexcept
+	{
+		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
+		{
+			if (a.Min()[i] > b.Min()[i] || a.Max()[i] < b.Max()[i])
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	template <class TVector>
 	[[nodiscard]] bool Overlap(Box<TVector> const& box, TVector const& point) noexcept
 	{
 		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
@@ -676,8 +869,35 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] auto GetDistanceSquared(TVector const& point, Box<TVector> const& box)
 	{
-		auto const closest = GetClosestPointOnBox(box, point);
-		return GetDistanceSquared(point, closest);
+		typename VectorTraits<TVector>::ScalarType result{ 0 };
+		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
+		{
+			if (point[i] < box.Min()[i])
+			{
+				result += Square(box.Min()[i] - point[i]);
+			}
+			else if (point[i] > box.Max()[i])
+			{
+				result += Square(point[i] - box.Max()[i]);
+			}
+		}
+
+		return result;
+	}
+
+	template <class TVector>
+	[[nodiscard]] auto GetDistanceSquared(TVector const& point, Box<TVector> const& box, int axisIndex) -> typename VectorTraits<TVector>::ScalarType
+	{
+		if (point[axisIndex] < box.Min()[axisIndex])
+		{
+			return Square(box.Min()[axisIndex] - point[axisIndex]);
+		}
+		else if (point[axisIndex] > box.Max()[axisIndex])
+		{
+			return Square(point[axisIndex] - box.Max()[axisIndex]);
+		}
+
+		return 0;
 	}
 
 	template <class TVector>
@@ -710,5 +930,38 @@ namespace GeoToolbox
 	{
 		stream << point[0] << ' ' << point[1];
 		return stream;
+	}
+
+	template <class TVector>
+	TVector ReInterpolate(TVector const& p, Box2 const& fromRange, Box2 const& toRange)
+	{
+		return
+		{
+			ReInterpolate(p[0], { fromRange.Min()[0], fromRange.Max()[0] }, { toRange.Min()[0], toRange.Max()[0] }),
+			ReInterpolate(p[1], { fromRange.Min()[1], fromRange.Max()[1] }, { toRange.Min()[1], toRange.Max()[1] })
+		};
+	}
+
+
+	template <class TVector, class TIterator>
+	void MakeCircle(TIterator output, typename VectorTraits<TVector>::ScalarType radius, int vertexCount)
+	{
+		using ScalarType = typename VectorTraits<TVector>::ScalarType;
+
+		for (auto i = 0; i < vertexCount; ++i)
+		{
+			auto const angle = i * 2 * Pi / vertexCount;
+			*output = radius * TVector{ ScalarType(std::cos(angle)), ScalarType(std::sin(angle)) };
+			++output;
+		}
+	}
+
+	template <class TVector>
+	std::vector<TVector> MakeCircle(typename VectorTraits<TVector>::ScalarType radius, int vertexCount)
+	{
+		std::vector<TVector> result;
+		result.reserve(vertexCount);
+		MakeCircle(std::back_inserter(result), radius, vertexCount);
+		return result;
 	}
 }

@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -62,9 +62,26 @@ namespace GeoToolbox
 
 		explicit ShapeFile(std::filesystem::path filePath);
 
-		static bool Write(std::filesystem::path const& filePath, Span<Vector2 const> );
+		template <class TVector>
+		static bool Write_(std::filesystem::path const& filePath, Span<TVector const>);
 
-		static bool Write(std::filesystem::path const& filePath, Span<Box2 const> );
+		static bool Write(std::filesystem::path const& filePath, Span<Vector2 const> points)
+		{
+			return Write_<Vector2>(filePath, points);
+		}
+
+		static bool Write(std::filesystem::path const& filePath, Span<Vector3 const> points)
+		{
+			return Write_<Vector3>(filePath, points);
+		}
+
+		static bool Write(std::filesystem::path const& filePath, Span<Vector3f const> points)
+		{
+			auto dpoints = Transform(points, [](auto const& p) { return Convert<Vector3>(p); });
+			return Write_<Vector3>(filePath, dpoints);
+		}
+
+		static bool Write(std::filesystem::path const& filePath, Span<Box2 const>);
 
 		[[nodiscard]] std::filesystem::path const& GetFilePath() const noexcept
 		{
@@ -84,9 +101,11 @@ namespace GeoToolbox
 		template <typename TSpatialKey>
 		[[nodiscard]] bool Supports() const noexcept
 		{
-			static_assert(SpatialKeyTraits<TSpatialKey>::Dimensions <= 3);
-
-			if constexpr (SpatialKeyIsPoint<TSpatialKey>)
+			if constexpr (SpatialKeyTraits<TSpatialKey>::Dimensions != 2)
+			{
+				return false;
+			}
+			else if constexpr (SpatialKeyIsPoint<TSpatialKey>)
 			{
 				return Contains(
 					std::array{ ShapeType::Point, ShapeType::PointM, ShapeType::PointZ, ShapeType::MultiPoint, ShapeType::MultiPointM, ShapeType::MultiPointZ },
@@ -111,18 +130,22 @@ namespace GeoToolbox
 		[[nodiscard]] static Interval<double> GetBounds(tagSHPObject const& object, int axis);
 
 		template <typename TSpatialKey>
-		[[nodiscard]] TSpatialKey GetKey(tagSHPObject const& object) const noexcept
+		[[nodiscard]] TSpatialKey GetKey(tagSHPObject const& object) const
 		{
 			static_assert(SpatialKeyTraits<TSpatialKey>::Dimensions <= 3);
+			using ScalarType = typename SpatialKeyTraits<TSpatialKey>::ScalarType;
+			using VectorType = typename SpatialKeyTraits<TSpatialKey>::VectorType;
 
 			if constexpr (SpatialKeyIsPoint<TSpatialKey>)
 			{
-				return { GetCoordinates(object, 0)[0], GetCoordinates(object, 1)[0] };
+				return { ScalarType(GetCoordinates(object, 0)[0]), ScalarType(GetCoordinates(object, 1)[0]) };
 			}
 			else
 			{
 				static_assert(SpatialKeyIsBox<TSpatialKey>, "Not implemented for this type");
-				return { { GetBounds(object, 0).min, GetBounds(object, 1).min }, { GetBounds(object, 0).max, GetBounds(object, 1).max } };
+				Vector2 min = { GetBounds(object, 0).min, GetBounds(object, 1).min };
+				Vector2 max = { GetBounds(object, 0).max, GetBounds(object, 1).max };
+				return { Convert<VectorType>(min), Convert<VectorType>(max) };
 			}
 		}
 

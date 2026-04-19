@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -303,6 +303,7 @@ namespace GeoToolbox
 			, current{ std::in_place_index<0>, std::get<0>(owner->iterables).begin() }
 			, end{ std::in_place_index<0>, std::get<0>(owner->iterables).end() }
 		{
+			MoveToNextValid();
 		}
 
 		reference operator*() const
@@ -421,7 +422,7 @@ namespace GeoToolbox
 				return int(stage_);
 			}
 
-			int Next() noexcept(IsReleaseBuild)
+			int Next()
 			{
 				DEBUG_ASSERT(int(stage_) >= 0);
 				return stage_ = stage_ + 1;
@@ -729,12 +730,16 @@ namespace GeoToolbox
 			return result;
 		}
 
-		[[nodiscard]] std::vector<std::basic_string<C>> toArray() const
+		[[nodiscard]] std::vector<std::basic_string<C>> toArray(bool trim = false) const
 		{
 			std::vector<std::basic_string<C>> result;
 			for (TSplitIterator iter(*this); !iter.done(); ++iter)
 			{
 				result.emplace_back(*iter);
+				if (trim)
+				{
+					Trim(result.back());
+				}
 			}
 
 			return result;

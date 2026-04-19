@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Ivan Kolev
+// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -8,23 +8,25 @@
 using namespace GeoToolbox;
 using namespace std;
 
-template <typename TSpatialKey, typename FeaturePtr>
-auto StdVector<TSpatialKey, FeaturePtr>::Load(Dataset<TSpatialKey> const& dataset, SharedAllocatedSize allocatorStats) -> IndexType
+template <typename TSpatialKey>
+shared_ptr<void> StdVector<TSpatialKey>::Load(Dataset<TSpatialKey> const& dataset) const
 {
 	auto const data = dataset.GetData();
-	return { ValueIterator{ data.data() }, ValueIterator{ data.data() + data.size() }, ProfileAllocator<FeaturePtr>{ std::move(allocatorStats) } };
+	return make_shared<IndexType>( ValueIterator{ data.data() }, ValueIterator{ data.data() + data.size() } );
 }
 
-template <typename TSpatialKey, typename FeaturePtr>
-void StdVector<TSpatialKey, FeaturePtr>::Insert(IndexType& index, FeaturePtr feature)
+template <typename TSpatialKey>
+void StdVector<TSpatialKey>::Insert(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const
 {
+	auto& index = *static_cast<IndexType*>(indexPtr.get());
 	DEBUG_ASSERT(!Contains(index, feature));
 	index.push_back(feature);
 }
 
-template <typename TSpatialKey, typename FeaturePtr>
-bool StdVector<TSpatialKey, FeaturePtr>::Erase(IndexType& index, FeaturePtr feature)
+template <typename TSpatialKey>
+bool StdVector<TSpatialKey>::Erase(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const
 {
+	auto& index = *static_cast<IndexType*>(indexPtr.get());
 	auto const location = Find(index, feature);
 	if (location == index.end())
 	{
@@ -42,7 +44,9 @@ bool StdVector<TSpatialKey, FeaturePtr>::Erase(IndexType& index, FeaturePtr feat
 }
 
 template struct StdVector<Vector2>;
+template struct StdVector<Vector3f>;
 template struct StdVector<Box2>;
+template struct StdVector<Box3f>;
 #if defined( ENABLE_EIGEN )
 template struct StdVector<EVector2>;
 template struct StdVector<Box<EVector2>>;
