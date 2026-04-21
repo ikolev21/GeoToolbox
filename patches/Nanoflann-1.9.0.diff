@@ -1,0 +1,34 @@
+diff --git a/include/nanoflann.hpp b/include/nanoflann.hpp
+index dc297bc..ede0b30 100644
+--- a/include/nanoflann.hpp
++++ b/include/nanoflann.hpp
+@@ -2007,8 +2007,12 @@ class KDTreeSingleIndexAdaptor
+         // If this is a leaf node, then do check and return.
+         if (!node->child1)  // (if one node is nullptr, both are)
+         {
+-            for (Offset i = node->node_type.lr.left; i < node->node_type.lr.right; ++i)
++            GeoToolbox::AddQueryStats_VisitedNodesCount();
++
++        	for (Offset i = node->node_type.lr.left; i < node->node_type.lr.right; ++i)
+             {
++                GeoToolbox::AddQueryStats_ObjectTestsCount();
++
+                 const IndexType accessor = Base::vAcc_[i];  // reorder... : i;
+                 DistanceType    dist =
+                     distance_.evalMetric(vec, accessor, (DIM > 0 ? DIM : Base::dim_));
+@@ -2034,6 +2038,7 @@ class KDTreeSingleIndexAdaptor
+         NodePtr      bestChild;
+         NodePtr      otherChild;
+         DistanceType cut_dist;
++        GeoToolbox::AddQueryStats_ScalarComparisonsCount();
+         if ((diff1 + diff2) < 0)
+         {
+             bestChild  = node->child1;
+@@ -2058,6 +2063,7 @@ class KDTreeSingleIndexAdaptor
+         DistanceType dst = dists[idx];
+         mindist          = mindist + cut_dist - dst;
+         dists[idx]       = cut_dist;
++        GeoToolbox::AddQueryStats_ScalarComparisonsCount();
+         if (mindist * epsError <= result_set.worstDist())
+         {
+             if (!searchLevel(result_set, vec, otherChild, mindist, dists, epsError))

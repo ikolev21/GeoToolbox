@@ -1,0 +1,17 @@
+ rtree.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/rtree.c b/rtree.c
+index e06e8ef..75e95b9 100644
+--- a/rtree.c
++++ b/rtree.c
+@@ -10,7 +10,9 @@
+ ////////////////////////////////
+ 
+ #define DATATYPE void *
++#ifndef DIMS
+ #define DIMS 2
++#endif
+ #define NUMTYPE double
+ #define MAXITEMS 64
+ 
