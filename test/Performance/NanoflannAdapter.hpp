@@ -24,12 +24,8 @@ struct NanoflannStaticKdtree : SpatialIndexWrapper<TSpatialKey>
 #	pragma warning( disable : 4324 ) // Node: structure was padded due to alignment specifier
 #endif
 
-#if defined( _MSC_VER ) && !defined( __clang__ )
-#	define NANOFLANN_NODE_ALIGNMENT 8
-#else
-// GCC and Clang generate code that causes unaligned access exception in nanoflann with points of type array<float,3>, if alignment is set to more than 8 bytes
-#	define NANOFLANN_NODE_ALIGNMENT 8
-#endif
+// Default is 16, but tests don't show much difference in performance
+#define NANOFLANN_NODE_ALIGNMENT 8
 
 // Nanoflann uses malloc/free (in addition to new/delete), need to hook these to track memory usage
 #define malloc TrackedMalloc

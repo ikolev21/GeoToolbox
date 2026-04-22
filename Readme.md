@@ -22,7 +22,7 @@ Currently, the focus of this project is to make a flexible performance compariso
 
 The major libraries tested are:
 
-- [Boost.Geometry 1.90](https://www.boost.org/doc/libs/1_90_0/libs/geometry/doc/html/geometry/reference/spatial_indexes.html) R-tree
+- [Boost.Geometry 1.90](https://www.boost.org/doc/libs/1_90_0/libs/geometry/doc/html/geometry/reference/spatial_indexes.html) R<sup>*</sup>-tree
 - [Nanoflann 1.9.0](https://github.com/jlblancoc/nanoflann) k-d tree
 - [GEOS 3.13.0](https://libgeos.org/) STR-tree
 - [tidwall](https://github.com/tidwall/rtree.c) R-tree implementation in C
@@ -60,10 +60,10 @@ These parameters can be varied and filtered out with a runtime configuration:
 
 | Index \ Feature | Point keys | Box keys | Scalar type | Dimensions | Bulk-load | Insert | Erase | Range query | Nearest query |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| Boost R-Tree | + | + | any | any | + | + | + | + | + |
+| Boost R<sup>*</sup>-tree | + | + | any | any | + | + | + | + | + |
 | Nanoflann | + | +<sup>1</sup> | any | any | | + <sup>2</sup> | | +<sup>3</sup> | for points only |
 | GEOS STR-tree | +<sup>4</sup> | + | double | 2 | + | | | + | |
-| tidwall R-tree | +<sup>4</sup> | + | double | any<sup>5</sup> | + | + | + | + | |
+| tidwall R-tree | +<sup>4</sup> | + | any<sup>5</sup> | any<sup>5</sup> | + | + | + | + | |
 
 <sup>1</sup>: Nanoflann only works with N-dimensional points. To work with boxes, they can be represented as 2N dimensional points, storing both the lower and upper limit along each axis.
 This requires writing custom implementations of the queries; currently just a range query implementation is included.
@@ -72,9 +72,9 @@ This requires writing custom implementations of the queries; currently just a ra
 
 <sup>3</sup>: As of version 1.8.0 Nanoflann includes a range query, but the implementation here that was written for older Nanoflann versions turns out to be faster, so it's used instead
 
-<sup>4</sup>: Intended to work with boxes only, but a point can be represented as a box with coinciding ends
+<sup>4</sup>: Intended to work with boxes only, but a point can be represented as a box with coinciding ends. Of course, this spends unnecessary memory
 
-<sup>5</sup>: Dimensions are fixed to 2, but defined with a macro, so it is possible to redefine the macro to compile the library (and its clients) for a single chosen dimension (which cannot be varied across the project)
+<sup>5</sup>: Dimensions and scalar type are fixed by macros at compilaiton time, so it is possible to redefine the macros to compile the library (and its clients) for a single chosen dimension/type, which cannot be varied across the project
 
 ### Results
 
