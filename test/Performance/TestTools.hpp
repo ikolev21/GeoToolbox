@@ -22,10 +22,10 @@ namespace GeoToolbox
 	class Image;
 }
 
-static constexpr auto Kilobyte = 1024;
+constexpr auto Kilobyte = 1024;
 
-static constexpr auto SetColorRed = "\033[31m";
-static constexpr auto ResetColor = "\033[0m";
+constexpr auto SetColorRed = "\033[31m";
+constexpr auto ResetColor = "\033[0m";
 
 
 template <typename T = int64_t>
@@ -262,9 +262,9 @@ public:
 		bool failed = false;
 
 		int queryVisitedNodes = 0;
-		int queryScalarComparisons = 0;
-		int queryBoxOverlaps = 0;
-		int queryObjectTests = 0;
+		GeoToolbox::QueryStats::CounterType queryScalarComparisons = 0;
+		GeoToolbox::QueryStats::CounterType queryBoxOverlaps = 0;
+		GeoToolbox::QueryStats::CounterType queryObjectTests = 0;
 
 		std::string info{};  // NOLINT(readability-redundant-member-init)
 

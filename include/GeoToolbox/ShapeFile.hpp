@@ -152,20 +152,27 @@ namespace GeoToolbox
 		template <typename TSpatialKey>
 		[[nodiscard]] std::vector<TSpatialKey> GetKeys(int limit = -1) const
 		{
-			std::vector<TSpatialKey> result;
-			limit = limit < 0 ? objectCount_ : std::min(objectCount_, limit);
-			for (auto index = 0; index < limit; ++index)
+			if constexpr (SpatialKeyTraits<TSpatialKey>::Dimensions >= 3)
 			{
-				auto const object = GetObject(index);
-				if (object == nullptr)
+				return {};
+			}
+			else
+			{
+				std::vector<TSpatialKey> result;
+				limit = limit < 0 ? objectCount_ : std::min(objectCount_, limit);
+				for (auto index = 0; index < limit; ++index)
 				{
-					continue;
+					auto const object = GetObject(index);
+					if (object == nullptr)
+					{
+						continue;
+					}
+
+					result.push_back(GetKey<TSpatialKey>(*object));
 				}
 
-				result.push_back(GetKey<TSpatialKey>(*object));
+				return result;
 			}
-
-			return result;
 		}
 
 		[[nodiscard]] std::vector<Segment2> GetSegments() const;

@@ -24,8 +24,8 @@ struct NanoflannStaticKdtree : SpatialIndexWrapper<TSpatialKey>
 #	pragma warning( disable : 4324 ) // Node: structure was padded due to alignment specifier
 #endif
 
-// Default is 16, but tests don't show much difference in performance
-#define NANOFLANN_NODE_ALIGNMENT 8
+// Default is 16, tests don't show much difference in performance between 8 and 16, while 32 seems slower
+//#define NANOFLANN_NODE_ALIGNMENT 16
 
 // Nanoflann uses malloc/free (in addition to new/delete), need to hook these to track memory usage
 #define malloc TrackedMalloc
@@ -280,8 +280,8 @@ struct NanoflannStaticKdtree final : NanoflannStaticKdtreeBase<TVector>
 
 		std::vector nearestIndices(nearestCount, 0);
 		std::vector nearestDistances(nearestCount, ScalarType{ 0 });
-		index.second->knnSearch(location.data(), nearestCount, nearestIndices.data(), nearestDistances.data());
-		return GeoToolbox::Accumulate(nearestDistances, 0.0, [](double a, ScalarType d) { return a + d; });
+		auto const numberFound = index.second->knnSearch(location.data(), nearestCount, nearestIndices.data(), nearestDistances.data());
+		return std::accumulate(nearestDistances.begin(), nearestDistances.begin() + numberFound, 0.0, [](double a, ScalarType d) { return a + d; });
 	}
 };
 

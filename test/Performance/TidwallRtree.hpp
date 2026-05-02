@@ -97,7 +97,7 @@ struct TidwallRtree : SpatialIndexWrapper<TSpatialKey>
 
 	[[nodiscard]] std::string_view Name() const override
 	{
-		return "Tidwall R-Tree";
+		return "Tidwall R-tree";
 	}
 
 	[[nodiscard]] bool IsDynamic() const override

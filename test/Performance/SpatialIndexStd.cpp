@@ -12,6 +12,12 @@ template <typename TSpatialKey>
 shared_ptr<void> StdVector<TSpatialKey>::Load(Dataset<TSpatialKey> const& dataset) const
 {
 	auto const data = dataset.GetData();
+	if (data.size() > 100'000)
+	{
+		// Too large datasets take too much time
+		return nullptr;
+	}
+
 	return make_shared<IndexType>( ValueIterator{ data.data() }, ValueIterator{ data.data() + data.size() } );
 }
 

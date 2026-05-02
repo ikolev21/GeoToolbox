@@ -15,7 +15,7 @@ using namespace std;
 
 void* TrackedMalloc(size_t size)
 {
-	auto const result = static_cast<size_t*>(malloc(size + 4 * sizeof(size_t)));
+	auto const result = static_cast<size_t*>(malloc(size + 2 * sizeof(size_t)));
 	if (result == nullptr)
 	{
 		return result;
@@ -23,12 +23,12 @@ void* TrackedMalloc(size_t size)
 
 	GeoToolbox::TotalAllocatedSize += size;
 	result[0] = size;
-	return result + 4;
+	return result + 2;
 }
 
 void TrackedFree(void* block)
 {
-	auto const original = static_cast<size_t*>(block) - 4;
+	auto const original = static_cast<size_t*>(block) - 2;
 	GeoToolbox::TotalAllocatedSize -= original[0];
 	free(original);
 }

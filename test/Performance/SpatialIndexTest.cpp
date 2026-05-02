@@ -48,22 +48,22 @@ using SpatialKeysToTest = TypeList<
 template <typename TSpatialKey, template <class> class... TIndex>
 auto MakeIndicesToTest()
 {
-	return array{ static_cast<unique_ptr<SpatialIndexWrapper<TSpatialKey>>>( make_unique<TIndex<TSpatialKey>>() )... };
+	return array{ static_cast<unique_ptr<SpatialIndexWrapper<TSpatialKey>>>(make_unique<TIndex<TSpatialKey>>())... };
 }
 
 template <typename TSpatialKey>
 auto const IndicesToTest = MakeIndicesToTest<TSpatialKey
-//, StdVector // Too slow, enable only to verify the results of the other participants
-, NanoflannStaticKdtree
-, GeosTemplateStrTree
-//, GeosKdTree	// Always slower than TemplateStrTree
-//, GeosQuadTree	// Always slower than TemplateStrTree
-//, GeosVertexSequencePackedRtree	// In rare cases is just a bit faster than TemplateStrTree, (much) slower in 
-, TidwallRtree
-, BoostRtree
-, AlglibKdtree	// works with double only and needs conversion from float, not implemented yet. Query times are consistently worse than all other indices
+	, StdVector // Too slow, enable only to verify the results of the other participants
+	, NanoflannStaticKdtree
+	, GeosTemplateStrTree
+	//, GeosKdTree	// Always slower than TemplateStrTree
+	//, GeosQuadTree	// Always slower than TemplateStrTree
+	//, GeosVertexSequencePackedRtree	// In rare cases is just a bit faster than TemplateStrTree, (much) slower in 
+	, TidwallRtree
+	, BoostRtree
+	, AlglibKdtree	// works with double only and needs conversion from float, not implemented yet. Query times are consistently worse than all other indices
 #ifdef ENABLE_PRIVATE
-, PrivateIndex
+	, PrivateIndex
 #endif
 >();
 
@@ -97,8 +97,6 @@ namespace
 	template <typename TSpatialKey>
 	struct DatasetMaker
 	{
-		static_assert(SpatialKeyTraits<TSpatialKey>::Dimensions <= 3);
-
 		static constexpr auto DefaultRandomSeed = 13;
 
 		using VectorType = typename SpatialKeyTraits<TSpatialKey>::VectorType;
@@ -112,7 +110,7 @@ namespace
 		uniform_real_distribution<ScalarType> distributionHeight;
 
 
-		DatasetMaker(ScalarType extent = 0, ScalarType maxBoxHeight = 0, int randomSeed = 0)
+		explicit DatasetMaker(ScalarType extent = 0, ScalarType maxBoxHeight = 0, int randomSeed = 0)
 			: extent{ std::max(extent, ScalarType(1)) }
 			, heightRange{ ScalarType(1e-7), std::max(maxBoxHeight, ScalarType(1e-6)) }
 			, boundingBox{ Box<VectorType>::Square(extent) }
@@ -211,7 +209,7 @@ shared_ptr<Dataset<TSpatialKey>> LoadObjFile(std::filesystem::path const& path)
 		return {};
 	}
 
-	if constexpr(!SpatialKeyIsPoint<TSpatialKey> || SpatialKeyTraits<TSpatialKey>::Dimensions != 3)
+	if constexpr (!SpatialKeyIsPoint<TSpatialKey> || SpatialKeyTraits<TSpatialKey>::Dimensions != 3)
 	{
 		if (PrintVerboseMessages())
 		{
@@ -226,28 +224,28 @@ shared_ptr<Dataset<TSpatialKey>> LoadObjFile(std::filesystem::path const& path)
 		using ScalarType = typename VectorTraits<TSpatialKey>::ScalarType;
 		ifstream inputFile{ path };
 		string line;
-		while( std::getline( inputFile, line ) )
+		while (std::getline(inputFile, line))
 		{
-			if( StartsWith( line, "v " ) )
+			if (StartsWith(line, "v "))
 			{
-				stringstream ls{ line.substr( 2 ) };
+				stringstream ls{ line.substr(2) };
 				ScalarType x = 0, y = 0, z = 0;
 				ls >> x >> y >> z;
-				if( ls )
+				if (ls)
 				{
-					if constexpr( VectorTraits<TSpatialKey>::Dimensions == 2 )
+					if constexpr (VectorTraits<TSpatialKey>::Dimensions == 2)
 					{
-						verts.push_back( { x, y } );
+						verts.push_back({ x, y });
 					}
 					else
 					{
-						verts.push_back( { x, y, z } );
+						verts.push_back({ x, y, z });
 					}
 				}
 			}
 		}
 
-		return make_shared<Dataset<TSpatialKey>>( path.filename().string(), std::move( verts ) );
+		return make_shared<Dataset<TSpatialKey>>(path.filename().string(), std::move(verts));
 	}
 }
 
@@ -398,7 +396,7 @@ struct DatasetPolygon : Dataset<TSpatialKey>
 	static constexpr auto OuterRadius = 100;
 	static constexpr auto InnerRadius = 80;
 
-	DatasetPolygon(int maxSize)
+	explicit DatasetPolygon(int maxSize)
 		: Dataset<TSpatialKey>{ DatasetName_Polygon, std::vector<TSpatialKey>(maxSize) }
 	{
 		this->onSizeChange_ = OnSizeChange;
@@ -426,7 +424,7 @@ struct DatasetPolygon : Dataset<TSpatialKey>
 	{
 		auto& dataset = static_cast<DatasetPolygon&>(datasetBase);
 		dataset.SetSize_(newSize);
-		if constexpr(SpatialKeyTraits<TSpatialKey>::Dimensions == 2)
+		if constexpr (SpatialKeyTraits<TSpatialKey>::Dimensions == 2)
 		{
 			TwoCircles(dataset, newSize, 0);
 		}
@@ -522,57 +520,6 @@ struct SyntheticDatasetGenerator : Generators::State<Dataset<TSpatialKey>>
 	}
 };
 
-
-struct ResultVerifier
-{
-	static constexpr auto MaxResultCount = 5;
-
-	ResultVerifier()
-	{
-		Reset();
-	}
-
-	int Check(double result, int index, string_view indexName, string_view queryName, Timings::ActionStats* stats = nullptr)
-	{
-		if (result < 0)
-		{
-			return 0;
-		}
-
-		if (checkResults[index] < 0)
-		{
-			if (PrintVerboseMessages())
-			{
-				cout << "\t\t\tInitial result for query " << queryName << " in index " << indexName << ": " << result << '\n';
-			}
-
-			checkResults[index] = result;
-			return 0;
-		}
-
-		//REQUIRE_THAT(results[i], Catch::Matchers::WithinAbs(checkResults[i], Epsilon));
-		if (abs(result - checkResults[index]) <= 1.0/*.5*/)
-		{
-			return 0;
-		}
-
-		cout << SetColorRed << "\t\t\tFAILED query " << queryName << " in index " << indexName << ": " << result << "\texpected: " << checkResults[index] << ResetColor << '\n';
-		if (stats != nullptr)
-		{
-			stats->failed = true;
-		}
-
-		return 1;
-	}
-
-	void Reset()
-	{
-		std::fill_n(checkResults.begin(), MaxResultCount, -1.0);
-	}
-
-
-	array<double, MaxResultCount> checkResults{};
-};
 
 template <typename TSpatialKey>
 std::string GetFilename(Dataset<TSpatialKey> const& dataset)
@@ -688,19 +635,21 @@ void SaveObj(Dataset<TSpatialKey> const& dataset)
 	}
 }
 
+
 struct TestContextBase
 {
 	Timings timings{ 2 * Timings::MsPerSecond };
 
 	PerfRecord* perfRecord;
 
-	ResultVerifier verifier;
-
 	string indexStats;
 
 	bool const resetResults = GetConfig().Get<bool>("Reset");
 };
 
+
+static constexpr auto QueriesPerAxis = 21;
+constexpr auto QueryNearestCount = 15;
 
 template <typename TSpatialKey>
 struct TestContext : TestContextBase
@@ -713,7 +662,8 @@ struct TestContext : TestContextBase
 
 	Dataset<TSpatialKey> const* dataset;
 
-	vector<pair<BoxType, int>> queryBoxResults;
+	vector<BoxType> queries;
+	vector<double> queryResults;
 
 
 	explicit TestContext(Dataset<TSpatialKey> const& dataset, PerfRecord& record)
@@ -721,7 +671,7 @@ struct TestContext : TestContextBase
 	{
 		perfRecord = &record;
 
-		if constexpr (StartsWith(SpatialKeyTraits<TSpatialKey>::VectorTraitsType::Name, "array"))
+		if constexpr (StartsWith(SpatialKeyTraits<TSpatialKey>::VectorTraitsType::Name, "array") && SpatialKeyTraits<TSpatialKey>::Dimensions == 2)
 		{
 			SaveImage(dataset);
 			SaveObj(dataset);
@@ -734,7 +684,44 @@ struct TestContext : TestContextBase
 			}
 		}
 
+		auto const querySize = 2 * dataset.GetSmallestExtent() / std::max(1, QueriesPerAxis - 1);
+		ASSERT(querySize > 0);
+		QueryIterator firstQuery{ GetLowBound(dataset.GetData().back().spatialKey), dataset.GetBoundingBox(), QueriesPerAxis, { querySize / 16, querySize / 2, querySize } };
+		std::copy(firstQuery, QueryIterator<VectorType>{}, back_inserter(queries));
+		//ASSERT(queryCount == QueriesPerAxis * QueriesPerAxis * 2);
+
+		queryResults.reserve(queries.size());
+
 		cout << dataset.GetName() << '\t' << dataset.GetSize() << '\n';
+	}
+
+	static constexpr auto Tolerance = 0.1;
+
+	bool VerifyQueryResults(vector<double>&& results, string_view spatialIndexName)
+	{
+		if (queryResults.empty())
+		{
+			queryResults = std::move(results);
+		}
+		else
+		{
+			for (auto i = 0; i < Size(results); ++i)
+			{
+				if (abs(results[i] - queryResults[i]) > Tolerance)
+				{
+					cout << SetColorRed << std::fixed << "\t\t\tFAILED query index " << i << " for spatial index " << spatialIndexName
+						<< ", expected result " << queryResults[i] << ", got " << results[i] << ResetColor << '\n';
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	void ResetQueryVerifier()
+	{
+		queryResults.clear();
 	}
 
 	// Returns the change factor compared to the previous best time
@@ -783,9 +770,6 @@ struct TestContext : TestContextBase
 	}
 };
 
-static constexpr auto QueriesPerAxis = 20;
-constexpr auto QueryNearestCount = 15;
-
 template <typename TSpatialKey>
 struct TestScenario
 {
@@ -797,6 +781,7 @@ struct TestScenario
 	[[nodiscard]] virtual int Run(TestContext<TSpatialKey>&, SpatialIndexWrapper<TSpatialKey> const&) const = 0;
 };
 
+
 template <typename TSpatialKey>
 struct Test_Load_Query_Destroy : TestScenario<TSpatialKey>
 {
@@ -807,21 +792,32 @@ struct Test_Load_Query_Destroy : TestScenario<TSpatialKey>
 
 	[[nodiscard]] int Run(TestContext<TSpatialKey>& test, SpatialIndexWrapper<TSpatialKey> const& wrapper) const override
 	{
-		auto queryResult = -1.0;
+		if (RunQuery(wrapper, wrapper.Load(Dataset<TSpatialKey>{}), BoxType{ VectorType{0} }) < 0)
+		{
+			if (PrintVerboseMessages())
+			{
+				cout << "\t\t" << "Skipped " << wrapper.Name() << " (does not support " << GetOpName() << ")\n";
+			}
+
+			return -1;
+		}
+
+		if (!wrapper.SupportsDatasetSize(test.dataset->GetSize()))
+		{
+			if (PrintVerboseMessages())
+			{
+				cout << "\t\t" << "Skipped " << wrapper.Name() << " (does not support datasets of size " << test.dataset->GetSize() << ")\n";
+			}
+
+			return -1;
+		}
+
 		Timings::ActionStats* statsQuery = nullptr;
-
-		auto const& dataset = *test.dataset;
-
-		auto const querySize = 2 * dataset.GetSmallestExtent() / std::max(1, QueriesPerAxis - 1);
-		ASSERT(querySize > 0);
-		QueryIterator firstQuery{ GetLowBound(dataset.GetData().back().spatialKey), dataset.GetBoundingBox(), QueriesPerAxis, { querySize / 16, querySize / 2, querySize } };
 
 		auto statsStored = false;
 
-		if (RunQuery(wrapper, wrapper.Load(Dataset<TSpatialKey>{}), BoxType{ VectorType{0} }) < 0)
-		{
-			return -1;
-		}
+		vector<double> queryResults;
+		queryResults.reserve(test.queries.size());
 
 		while (test.timings.NextIteration())
 		{
@@ -832,21 +828,28 @@ struct Test_Load_Query_Destroy : TestScenario<TSpatialKey>
 					return wrapper.Load(*test.dataset);
 				});
 
+			if (spatialIndex == nullptr)
+			{
+				return -1;
+			}
+
 			TheQueryStats.Clear();
-			queryResult = test.timings.Record(
+
+			test.timings.Record(
 				GetOpName(),
 				[&]
 				{
-					auto result = 0.0;
-					//auto failedQueryIndex = -1;
-					for (auto const& query : firstQuery.MakeRange())
+					auto queryIndex = 0;
+					for (auto const& query : test.queries)
 					{
-						result += RunQuery(wrapper, spatialIndex, query);
-					}
+						auto const result = RunQuery(wrapper, spatialIndex, query);
+						if (queryIndex > Size(queryResults))
+						{
+							queryResults.push_back(result);
+						}
 
-					//ASSERT(queryCount == QueriesPerAxis * QueriesPerAxis * 2);
-					//ASSERT(failedQueryIndex == -1);
-					return result;
+						++queryIndex;
+					}
 				},
 				&statsQuery);
 
@@ -866,13 +869,7 @@ struct Test_Load_Query_Destroy : TestScenario<TSpatialKey>
 				});
 		}
 
-		auto failureCount = 0;
-		if (queryResult >= 0)
-		{
-			failureCount += test.verifier.Check(queryResult, 0, wrapper.Name(), GetOpName(), statsQuery);
-		}
-
-		return failureCount;
+		return test.VerifyQueryResults(std::move(queryResults), wrapper.Name()) ? 0 : 1;
 	}
 
 	[[nodiscard]] virtual double RunQuery(SpatialIndexWrapper<TSpatialKey> const& wrapper, std::shared_ptr<void> const& spatialIndex, BoxType const& query) const = 0;
@@ -940,6 +937,16 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 			return -1;
 		}
 
+		if (!wrapper.SupportsDatasetSize(test.dataset->GetSize()))
+		{
+			if (PrintVerboseMessages())
+			{
+				cout << "\t\t" << "Skipped " << wrapper.Name() << " (does not support datasets of size " << test.dataset->GetSize() << ")\n";
+			}
+
+			return -1;
+		}
+
 		if constexpr (SpatialKeyTraits<TSpatialKey>::Dimensions != 2)
 		{
 			if (PrintVerboseMessages())
@@ -957,13 +964,12 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 
 	static int Run_(TestContext<TSpatialKey>& test, SpatialIndexWrapper<TSpatialKey> const& wrapper)
 	{
-		auto queryBoxResult = -1.0;
 		Timings::ActionStats* statsQueryBox = nullptr;
 
 		auto const& dataset = *test.dataset;
 
-		auto const querySize = 2 * dataset.GetSmallestExtent() / (QueriesPerAxis - 2);
-		QueryIterator firstQuery{ GetLowBound(dataset.GetData().back().spatialKey), dataset.GetBoundingBox(), QueriesPerAxis, { querySize / 16, querySize / 2, querySize } };
+		vector<double> queryResults;
+		queryResults.reserve(test.queries.size());
 
 		auto statsStored = false;
 
@@ -1019,33 +1025,34 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 					wrapper.Rebalance(spatialIndex);
 				});
 
+			TheQueryStats.Clear();
+			test.timings.Record(
+				OpNameQueryBox,
+				[&]
+				{
+					auto queryIndex = 0;
+					for (auto const& query : test.queries)
+					{
+						auto const result = wrapper.QueryBox(spatialIndex, query);
+						if (queryIndex > Size(queryResults))
+						{
+							queryResults.push_back(result);
+						}
+
+						++queryIndex;
+					}
+				}, &statsQueryBox);
+			statsQueryBox->extra = make_shared<QueryStats>(TheQueryStats);
+			TheQueryStats.Clear();
+
 			if (!statsStored)
 			{
 				statsStored = true;
 				test.indexStats = wrapper.GetIndexStats(spatialIndex);
 			}
-
-			TheQueryStats.Clear();
-			queryBoxResult = test.timings.Record(
-				OpNameQueryBox,
-				[&]
-				{
-					auto total = 0;
-					for (auto const& query : firstQuery.MakeRange())
-					{
-						total += wrapper.QueryBox(spatialIndex, query);
-					}
-
-					return total;
-				}, &statsQueryBox);
-			statsQueryBox->extra = make_shared<QueryStats>(TheQueryStats);
-			TheQueryStats.Clear();
 		}
 
-		ASSERT(queryBoxResult > 0);
-
-		auto const failureCount = test.verifier.Check(queryBoxResult, 0, wrapper.Name(), OpNameQueryBox, statsQueryBox);
-		return failureCount;
+		return test.VerifyQueryResults(std::move(queryResults), wrapper.Name()) ? 0 : 1;
 	}
 };
 
@@ -1064,32 +1071,30 @@ int RunSpatialIndex(TestContext<TSpatialKey>& testContext, TestScenario<TSpatial
 	if (failures >= 0)
 	{
 		auto const changeFactor = testContext.StoreResults(scenario.Name(), wrapper.Name());
-		if (failures >= 0)
+
+		cout << "\t\t" << wrapper.Name();
+		if (changeFactor > 0)
 		{
-			cout << "\t\t" << wrapper.Name();
-			if (changeFactor > 0)
+			cout << '\t' << std::setprecision(1) << std::fixed;
+			if (changeFactor >= 100)
 			{
-				cout << '\t' << std::setprecision(1) << std::fixed;
-				if (changeFactor >= 100)
-				{
-					cout << '+' << changeFactor - 100;
-				}
-				else
-				{
-					cout << '-' << 100 - changeFactor;
-				}
-
-				cout << '%';
+				cout << '+' << changeFactor - 100;
+			}
+			else
+			{
+				cout << '-' << 100 - changeFactor;
 			}
 
-			if (!testContext.indexStats.empty())
-			{
-				cout << '\t' << testContext.indexStats;
-			}
-
-			cout << '\n';
-			failuresCount = failures;
+			cout << '%';
 		}
+
+		if (!testContext.indexStats.empty())
+		{
+			cout << '\t' << testContext.indexStats;
+		}
+
+		cout << '\n';
+		failuresCount = failures;
 	}
 
 	return failuresCount;
@@ -1106,7 +1111,7 @@ int RunScenario(TestContext<TSpatialKey>& testContext, TestScenario<TSpatialKey>
 	cout << '\t' << scenario.Name() << '\n';
 	auto failuresCount = 0;
 
-	testContext.verifier.Reset();
+	testContext.ResetQueryVerifier();
 
 	for (auto const& wrapper : IndicesToTest<TSpatialKey>)
 	{

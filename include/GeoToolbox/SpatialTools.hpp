@@ -14,7 +14,7 @@
 
 namespace GeoToolbox
 {
-	// A common constant that may be used by tree-based spatial indices. This cannot be determined at runtime because at least one index (Boost R-Tree) needs it as a template parameter
+	// A common constant that may be used by tree-based spatial indices. This cannot be determined at runtime because at least one index (Boost R-tree) needs it as a template parameter
 	static constexpr auto MaxElementsPerNode = 32;
 
 	enum class SpatialKeyKind
@@ -344,9 +344,11 @@ namespace GeoToolbox
 
 	extern struct QueryStats
 	{
-		int ScalarComparisonsCount = 0;
-		int BoxOverlapsCount = 0;
-		int ObjectTestsCount = 0;
+		using CounterType = int64_t;
+
+		CounterType ScalarComparisonsCount = 0;
+		CounterType BoxOverlapsCount = 0;
+		CounterType ObjectTestsCount = 0;
 		int VisitedNodesCount = 0;
 		int QueryCount = 0;
 
@@ -410,7 +412,7 @@ namespace GeoToolbox
 
 	inline std::istream& operator>>(std::istream& stream, QueryStats& stats)
 	{
-		int scalar;
+		typename QueryStats::CounterType scalar;
 		stream >> scalar;
 		if (scalar > 0)
 		{

@@ -17,8 +17,9 @@ add_executable( GeoToolbox.PerfTest
 	TidwallRtree.hpp
 )
 
-if( WIN32 )
+if( MSVC )
 	set_source_files_properties( SpatialIndexTest.cpp PROPERTIES COMPILE_FLAGS "/bigobj" )
+	target_compile_options( GeoToolbox.PerfTest PRIVATE /arch:AVX2 )
 endif()
 
 target_link_libraries( GeoToolbox.PerfTest PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance GeoToolbox Catch2::Catch2 GeoToolbox.LodePNG ) # Eigen3
@@ -45,6 +46,9 @@ if( GeoToolbox_ENABLE_BOOST )
 	target_sources( GeoToolbox.PerfTest PRIVATE Boost.cpp )
 	target_compile_definitions( GeoToolbox.PerfTest PRIVATE ENABLE_BOOST )
 	target_link_libraries( GeoToolbox.PerfTest PRIVATE Boost::boost )
+	if( MSVC )
+		set_source_files_properties( Boost.cpp PROPERTIES COMPILE_FLAGS "/bigobj" )
+	endif()
 endif()
 
 
@@ -115,7 +119,7 @@ if( GeoToolbox_ENABLE_ALGLIB )
 endif()
 
 option( GeoToolbox_ENABLE_TIDWALL_RTREE "Include tests with Josh Baker's (tidwall) R-tree implementation in C, auto-downloaded from https://github.com/tidwall/rtree.c" ON )
-set( GeoToolbox_TIDWALL_DIMENSIONS 2 CACHE STRING "Tidwall R-Tree defines the number of dimensions with a macro at compile-time" )
+set( GeoToolbox_TIDWALL_DIMENSIONS 2 CACHE STRING "Tidwall R-tree defines the number of dimensions with a macro at compile-time" )
 
 if( GeoToolbox_ENABLE_TIDWALL_RTREE )
 	FetchContent_Declare(

@@ -117,19 +117,19 @@ TEST_CASE("RTreePerformance_Boost", "[.Performance]")
 	REQUIRE(boxes.size() > BoxCount);
 	REQUIRE(segments.size() > SegmentCount);
 
-	BENCHMARK("BG R-Tree - points: bulk load")
+	BENCHMARK("BG R-tree - points: bulk load")
 	{
 		Bgi::rtree< Vector2, Bgi::rstar<16> > const rtree{ points.begin(), points.begin() + PointCount };
 		return rtree.bounds();
 	};
 
-	BENCHMARK("BG R-Tree - boxes: bulk load")
+	BENCHMARK("BG R-tree - boxes: bulk load")
 	{
 		Bgi::rtree< Box2, Bgi::rstar<16> > const rtree{ boxes.begin(), boxes.begin() + BoxCount };
 		return rtree.bounds();
 	};
 
-	BENCHMARK("BG R-Tree - segments: bulk load")
+	BENCHMARK("BG R-tree - segments: bulk load")
 	{
 		Bgi::rtree< BgSegment, Bgi::rstar<16> > const rtree{ segments.begin(), segments.begin() + SegmentCount };
 		return rtree.bounds();

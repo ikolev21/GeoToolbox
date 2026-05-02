@@ -35,6 +35,11 @@ struct SpatialIndexWrapper
 		return false;
 	}
 
+	[[nodiscard]] virtual bool SupportsDatasetSize(int /*size*/) const
+	{
+		return true;
+	}
+
 	[[nodiscard]] virtual std::string GetIndexStats(std::shared_ptr<void> const& /*spatialIndex*/) const
 	{
 		return {};
@@ -96,24 +101,27 @@ struct StdContainer : SpatialIndexWrapper<TSpatialKey>
 		return true;
 	}
 
+	[[nodiscard]] virtual bool SupportsDatasetSize(int size) const
+	{
+		return size <= 100'000;
+	}
+
 	[[nodiscard]] std::shared_ptr<void> MakeEmptyIndex() const override
 	{
 		return std::make_shared<IndexType>();
 	}
 
-	// Return the count of the features found to intersect the box. Return negative value if this query is not supported
 	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
 	{
 		auto& index = *static_cast<IndexType const*>(indexPtr.get());
 		return GeoToolbox::/*Parallel*/CountIf(index, [&box](auto&& feature)
 			{
 				GeoToolbox::AddQueryStats_ObjectTestsCount();
+				GeoToolbox::AddQueryStats_BoxOverlapsCount();
 				return Overlap(box, feature->spatialKey);
 			});
 	}
 
-	// Return the sum of the squared distances to the nearest found features. This is more reliable than the feature ids, as different features may be returned if they are at close distance
-	// Return negative value if this query is not supported
 	[[nodiscard]] double QueryNearest(std::shared_ptr<void> const& indexPtr, VectorType const& location, int nearestCount) const override
 	{
 		using ScalarType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::ScalarType;
@@ -128,6 +136,8 @@ struct StdContainer : SpatialIndexWrapper<TSpatialKey>
 
 		for (auto const& feature : index)
 		{
+			GeoToolbox::AddQueryStats_ObjectTestsCount();
+			GeoToolbox::AddQueryStats_ScalarComparisonsCount();
 			auto distance2 = GeoToolbox::GetDistanceSquared(location, feature->spatialKey);
 			if (distance2 < nearest.back().second)
 			{
