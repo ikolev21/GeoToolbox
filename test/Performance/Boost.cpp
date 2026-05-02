@@ -17,7 +17,7 @@ namespace Bgi = boost::geometry::index;
 
 
 template <typename TSpatialKey>
-int BoostRtree<TSpatialKey>::QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const
+int BoostRtree<TSpatialKey>::QueryBox(shared_ptr<void> const& indexPtr, BoxType const& queryBox) const
 {
 	auto& index = *static_cast<IndexType const*>(indexPtr.get());
 
@@ -27,22 +27,33 @@ int BoostRtree<TSpatialKey>::QueryBox(std::shared_ptr<void> const& indexPtr, Box
 }
 
 template <typename TSpatialKey>
-double BoostRtree<TSpatialKey>::QueryNearest(std::shared_ptr<void> const& indexPtr, VectorType const& location, int nearestCount) const
+double BoostRtree<TSpatialKey>::QueryNearest(shared_ptr<void> const& indexPtr, VectorType const& location, int nearestCount) const
 {
-	auto& index = *static_cast<IndexType const*>(indexPtr.get());
+	using ScalarType = typename SpatialKeyTraits<TSpatialKey>::ScalarType;
 
-	//vector<pair<FeatureId, double>> nearest;
-	//nearest.reserve(nearestCount);
-	auto distSum = 0.0;
+	auto& index = *static_cast<IndexType const*>(indexPtr.get());
+	vector<pair<FeatureId, ScalarType>> nearest;
+	nearest.reserve(nearestCount);
+	auto comparer = [](pair<FeatureId, ScalarType> const& a, pair<FeatureId, ScalarType> const& b)
+		{
+			return a.second < b.second;
+		};
+
 	index.query(
 		Bgi::nearest(location, nearestCount),
-		OutputIteratorFunction{ [&distSum, &location](FeaturePtr feature) { distSum += double(GetDistanceSquared(location, feature->spatialKey)); } });
-	//auto const distSum = std::accumulate(nearest.begin(), nearest.end(), 0.0, [](double sum, pair<FeatureId, double> const& f) { return sum + f.second; });
+		OutputIteratorFunction{ [&](FeaturePtr feature)
+		{
+			auto const distance2 = GetDistanceSquared(location, feature->spatialKey);
+			auto const record = pair(feature->id, distance2);
+			auto position = lower_bound(nearest.begin(), nearest.end(), record, comparer);
+			nearest.insert(position, record);
+			if (Size(nearest) > nearestCount)
+			{
+				nearest.erase(--nearest.end());
+			}
+		} });
 
-	//cout << "BoostRtree nearest result for location " << location << ": " << distSum << " -> ";
-	//PrintNearest(nearest);
-
-	return distSum;
+	return accumulate(nearest.begin(), nearest.end(), 0.0, [](double sum, pair<FeatureId, ScalarType> const& f) { return sum + double(f.second); });
 }
 
 template struct BoostRtree<Vector2>;
@@ -66,7 +77,7 @@ TEST_CASE("RTreePerformance_Insert_Boost", "[.Performance]")
 	{
 		ShapeFile const properties("../../data/Property_Boundary_View.shp");
 		auto const boxes = properties.GetKeys<Box2>();
-		std::cout << "Boxes count: " << boxes.size() << '\n';
+		cout << "Boxes count: " << boxes.size() << '\n';
 
 		Bgi::rtree< Box2, Bgi::rstar<MaxElementsPerNode> > rtree;
 
@@ -79,7 +90,7 @@ TEST_CASE("RTreePerformance_Insert_Boost", "[.Performance]")
 	if constexpr (0)
 	{
 		auto const points = ShapeFile("../../data/Property_Point_View.shp").GetKeys<Vector2>();
-		std::cout << "Poins count: " << points.size() << '\n';
+		cout << "Poins count: " << points.size() << '\n';
 
 		Bgi::rtree< Vector2, Bgi::rstar<MaxElementsPerNode> > rtree;
 
@@ -103,7 +114,7 @@ TEST_CASE("RTreePerformance_Boost", "[.Performance]")
 	static auto constexpr BoxCount = SelectDebugRelease(1000, 500000);
 	static auto constexpr SegmentCount = SelectDebugRelease(1000, 150000);
 
-	//std::copy( std::filesystem::directory_iterator{ "." }, std::filesystem::directory_iterator{}, back_inserter( 
+	//copy( filesystem::directory_iterator{ "." }, filesystem::directory_iterator{}, back_inserter( 
 
 	using BgSegment = boost::geometry::model::segment<Vector2>;
 

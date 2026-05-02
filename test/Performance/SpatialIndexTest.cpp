@@ -697,7 +697,7 @@ struct TestContext : TestContextBase
 
 	static constexpr auto Tolerance = 0.1;
 
-	bool VerifyQueryResults(vector<double>&& results, string_view spatialIndexName)
+	bool VerifyQueryResults(vector<double>&& results, string_view spatialIndexName, Timings::ActionStats* stats = nullptr)
 	{
 		if (queryResults.empty())
 		{
@@ -711,6 +711,11 @@ struct TestContext : TestContextBase
 				{
 					cout << SetColorRed << std::fixed << "\t\t\tFAILED query index " << i << " for spatial index " << spatialIndexName
 						<< ", expected result " << queryResults[i] << ", got " << results[i] << ResetColor << '\n';
+					if (stats != nullptr)
+					{
+						stats->failed = true;
+					}
+
 					return false;
 				}
 			}
@@ -869,7 +874,7 @@ struct Test_Load_Query_Destroy : TestScenario<TSpatialKey>
 				});
 		}
 
-		return test.VerifyQueryResults(std::move(queryResults), wrapper.Name()) ? 0 : 1;
+		return test.VerifyQueryResults(std::move(queryResults), wrapper.Name(), statsQuery) ? 0 : 1;
 	}
 
 	[[nodiscard]] virtual double RunQuery(SpatialIndexWrapper<TSpatialKey> const& wrapper, std::shared_ptr<void> const& spatialIndex, BoxType const& query) const = 0;
@@ -1052,7 +1057,7 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 			}
 		}
 
-		return test.VerifyQueryResults(std::move(queryResults), wrapper.Name()) ? 0 : 1;
+		return test.VerifyQueryResults(std::move(queryResults), wrapper.Name(), statsQueryBox) ? 0 : 1;
 	}
 };
 

@@ -101,7 +101,7 @@ struct StdContainer : SpatialIndexWrapper<TSpatialKey>
 		return true;
 	}
 
-	[[nodiscard]] virtual bool SupportsDatasetSize(int size) const
+	[[nodiscard]] virtual bool SupportsDatasetSize(int size) const override
 	{
 		return size <= 100'000;
 	}
@@ -128,8 +128,8 @@ struct StdContainer : SpatialIndexWrapper<TSpatialKey>
 
 		auto& index = *static_cast<IndexType const*>(indexPtr.get());
 		ASSERT(nearestCount > 0);
-		std::vector nearest(nearestCount, std::pair(FeaturePtr{ nullptr }, std::numeric_limits<ScalarType>::max()));
-		auto comparer = [](std::pair<FeaturePtr, ScalarType> const& a, std::pair<FeaturePtr, ScalarType> const& b)
+		std::vector nearest(nearestCount, std::pair(GeoToolbox::FeatureId{ 0 }, std::numeric_limits<ScalarType>::max()));
+		auto comparer = [](std::pair<GeoToolbox::FeatureId, ScalarType> const& a, std::pair<GeoToolbox::FeatureId, ScalarType> const& b)
 			{
 				return a.second < b.second;
 			};
@@ -138,10 +138,10 @@ struct StdContainer : SpatialIndexWrapper<TSpatialKey>
 		{
 			GeoToolbox::AddQueryStats_ObjectTestsCount();
 			GeoToolbox::AddQueryStats_ScalarComparisonsCount();
-			auto distance2 = GeoToolbox::GetDistanceSquared(location, feature->spatialKey);
+			auto const distance2 = GeoToolbox::GetDistanceSquared(location, feature->spatialKey);
 			if (distance2 < nearest.back().second)
 			{
-				auto const record = std::pair(feature, distance2);
+				auto const record = std::pair(feature->id, distance2);
 				auto position = lower_bound(nearest.begin(), nearest.end(), record, comparer);
 				nearest.insert(position, record);
 				nearest.erase(--nearest.end());
