@@ -56,7 +56,7 @@ add_executable( GeoToolbox.Test
 	SpanTest.cpp
 )
 
-target_link_libraries( GeoToolbox.Test PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance GeoToolbox Catch2::Catch2WithMain )
+target_link_libraries( GeoToolbox.Test PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance LinkTimeOptimization GeoToolbox Catch2::Catch2WithMain )
 target_include_directories( GeoToolbox.Test PRIVATE ${FETCHCONTENT_BASE_DIR} )
 set_property( TARGET GeoToolbox.Test PROPERTY VS_USER_PROPS ${CMAKE_CURRENT_BINARY_DIR}/../Msvc.props )
 

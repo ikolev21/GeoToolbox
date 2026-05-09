@@ -351,7 +351,7 @@ int main(int argc, char* argv[])
 				{ "DatasetSize", -1, "Fixes the order of the dataset size to use (i.e. 1 means 10 element, 6 means 1 million elements). If not set, all orders from MinDatasetSize to MaxDatasetSize will be used" },
 				{ "MinDatasetSize", 2, "Minimum order of the size of the dataset, tests are executed for all orders from MinDatasetSize to MaxDatasetSize. Default: {def}" },
 				{ "MaxDatasetSize", 6, "Maximum order of the size of the dataset, tests are executed for all orders from MinDatasetSize to MaxDatasetSize. Default: {def}" },
-				{ "Scenario", "", "Comma-separated list of scenarios to run (partial case-insensitive match), one of: Load-QueryBox-Destroy, Load-QueryNearest-Destroy, Insert-Erase-Query" },
+				{ "Scenario", "", "Comma-separated list of scenarios to run (partial case-insensitive match), one of: Load-QueryRange-Destroy, Load-QueryNearest-Destroy, Insert-Erase-Query" },
 				{ "SpatialKey", "", "Comma-separated list of spatial keys to run the tests for, possible ones are 'point' and 'box'" },
 				{ "Vector", "", "Comma-separated list of vector types to run the tests for (if compiled), like 'array2d' or 'array3f'" },
 				{ "Dimensions", "", "Comma-separated list of dimensions to run the tests for" },

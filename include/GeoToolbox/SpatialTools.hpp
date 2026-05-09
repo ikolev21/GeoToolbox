@@ -340,7 +340,7 @@ namespace GeoToolbox
 	};
 
 
-#define ENABLE_QUERYSTATS
+//#define ENABLE_QUERYSTATS
 
 	extern struct QueryStats
 	{
@@ -497,3 +497,7 @@ struct std::hash<GeoToolbox::Feature<TSpatialKey>>
 		return std::hash<GeoToolbox::FeatureId>()(f.id);
 	}
 };
+
+extern "C" void GeoToolbox_AddQueryStats_BoxOverlapsCount();
+extern "C" void GeoToolbox_AddQueryStats_ObjectTestsCount();
+extern "C" void GeoToolbox_AddQueryStats_VisitedNodesCount();

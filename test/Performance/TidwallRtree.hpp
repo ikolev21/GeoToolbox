@@ -21,7 +21,7 @@ struct TidwallRtree : SpatialIndexWrapper<TSpatialKey>
 
 extern "C"
 {
-#include <tidwallrtree-src/rtree.h>
+#include "rtree.h"
 }
 
 namespace Tidwall
@@ -82,7 +82,7 @@ struct RtreeDeleter
 template <typename TSpatialKey, bool DimensionsMatch = GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == ENABLE_TIDWALL_RTREE>
 struct TidwallRtree : SpatialIndexWrapper<TSpatialKey>
 {
-	static constexpr auto Dimensions = 2;
+	static constexpr auto Dimensions = ENABLE_TIDWALL_RTREE;
 
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
 	using VectorTypeDouble = typename GeoToolbox::VectorTraits<VectorType>::template Reconfigure<double, 3>;

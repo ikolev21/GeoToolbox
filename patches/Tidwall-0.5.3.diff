@@ -1,0 +1,43 @@
+ rtree.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/rtree.c b/rtree.c
+index e06e8ef..00b4f52 100644
+--- a/rtree.c
++++ b/rtree.c
+@@ -7,10 +7,16 @@
+ #include <stdbool.h>
+ #include "rtree.h"
+ 
++extern void GeoToolbox_AddQueryStats_BoxOverlapsCount();
++extern void GeoToolbox_AddQueryStats_ObjectTestsCount();
++extern void GeoToolbox_AddQueryStats_VisitedNodesCount();
++
+ ////////////////////////////////
+ 
+ #define DATATYPE void *
++#ifndef DIMS
+ #define DIMS 2
++#endif
+ #define NUMTYPE double
+ #define MAXITEMS 64
+ 
+@@ -589,7 +595,10 @@ static bool node_search(struct node *node, struct rect *rect,
+     void *udata) 
+ {
+     if (node->kind == LEAF) {
++        GeoToolbox_AddQueryStats_VisitedNodesCount();
+         for (int i = 0; i < node->count; i++) {
++            GeoToolbox_AddQueryStats_ObjectTestsCount();
++            GeoToolbox_AddQueryStats_BoxOverlapsCount();
+             if (rect_intersects(&node->rects[i], rect)) {
+                 if (!iter(node->rects[i].min, node->rects[i].max, 
+                     node->datas[i].data, udata))
+@@ -601,6 +610,7 @@ static bool node_search(struct node *node, struct rect *rect,
+         return true;
+     }
+     for (int i = 0; i < node->count; i++) {
++        GeoToolbox_AddQueryStats_BoxOverlapsCount();
+         if (rect_intersects(&node->rects[i], rect)) {
+             if (!node_search(node->nodes[i], rect, iter, udata)) {
+                 return false;

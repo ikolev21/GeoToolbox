@@ -19,11 +19,9 @@ add_executable( GeoToolbox.PerfTest
 
 if( MSVC )
 	set_source_files_properties( SpatialIndexTest.cpp PROPERTIES COMPILE_FLAGS "/bigobj" )
-	target_compile_options( GeoToolbox.PerfTest PRIVATE /arch:AVX2 )
 endif()
 
-target_link_libraries( GeoToolbox.PerfTest PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance GeoToolbox Catch2::Catch2 GeoToolbox.LodePNG ) # Eigen3
-target_include_directories( GeoToolbox.PerfTest PRIVATE ${INCLUDE_DIR} ${FETCHCONTENT_BASE_DIR} )
+target_link_libraries( GeoToolbox.PerfTest PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance LinkTimeOptimization GeoToolbox Catch2::Catch2 GeoToolbox.LodePNG ) # Eigen3
 target_compile_definitions( GeoToolbox.PerfTest PRIVATE
 	CMAKE_BINARY_DIR=\"${CMAKE_BINARY_DIR}\"
 	RUNTIME_ENVIRONMENT_ID=\"${GeoToolbox_RUNTIME_ENVIRONMENT_ID}\"
@@ -95,7 +93,7 @@ if( GeoToolbox_ENABLE_NANOFLANN )
 
 	target_compile_definitions( GeoToolbox.PerfTest PRIVATE ENABLE_NANOFLANN )
 	target_link_libraries( GeoToolbox.PerfTest PRIVATE nanoflann::nanoflann )
-	target_sources( GeoToolbox.PerfTest PRIVATE ${FETCHCONTENT_BASE_DIR}/nanoflann-src/include/nanoflann.hpp )
+	target_sources( GeoToolbox.PerfTest PRIVATE ${FETCHCONTENT_SOURCE_DIR_NANOFLANN}/include/nanoflann.hpp )
 endif()
 
 option( GeoToolbox_ENABLE_ALGLIB "Include tests with the ALGLIB C++ library, auto-downloaded from https://www.alglib.net/download.php" OFF )
@@ -130,9 +128,9 @@ if( GeoToolbox_ENABLE_TIDWALL_RTREE )
 
 	FetchContent_MakeAvailable(TidwallRtree)
 
-	set(_p ${FETCHCONTENT_BASE_DIR}/tidwallrtree-src)
-	add_library( TidwallRtree STATIC ${_p}/rtree.c ${_p}/rtree.h )
+	add_library( TidwallRtree STATIC ${FETCHCONTENT_SOURCE_DIR_TIDWALLRTREE}/rtree.c ${FETCHCONTENT_SOURCE_DIR_TIDWALLRTREE}/rtree.h )
 	target_compile_definitions( TidwallRtree PRIVATE DIMS=${GeoToolbox_TIDWALL_DIMENSIONS} )
+	target_include_directories( TidwallRtree PUBLIC ${FETCHCONTENT_SOURCE_DIR_TIDWALLRTREE} )
 	if( 1 )
 		target_compile_definitions( TidwallRtree PRIVATE RTREE_NOATOMICS )
 	else()
@@ -140,6 +138,8 @@ if( GeoToolbox_ENABLE_TIDWALL_RTREE )
 			target_compile_options( TidwallRtree PRIVATE "/experimental:c11atomics" )
 		endif()
 	endif()
+	target_link_libraries( TidwallRtree PRIVATE LinkTimeOptimization )
+
 	target_link_libraries( GeoToolbox.PerfTest PRIVATE TidwallRtree )
 	target_compile_definitions( GeoToolbox.PerfTest PRIVATE ENABLE_TIDWALL_RTREE=${GeoToolbox_TIDWALL_DIMENSIONS} )
 endif()

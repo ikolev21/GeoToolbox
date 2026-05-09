@@ -5,8 +5,6 @@
 
 cmake_minimum_required( VERSION 3.18 )
 
-project( GeoToolbox )
-
 include( CMakeDependentOption )
 include( CMakePrintHelpers )
 include( FetchContent )
@@ -14,9 +12,23 @@ include( FetchContent )
 set( CMAKE_C_STANDARD 11 )
 set( CMAKE_CXX_STANDARD 17 )
 set( CMAKE_CXX_STANDARD_REQUIRED ON )
-set( CMAKE_CXX_EXTENSIONS off )
+set( CMAKE_CXX_EXTENSIONS OFF )
+set( CMAKE_CONFIGURATION_TYPES Debug;Release )
+
+project( GeoToolbox )
+
 if( MSVC )
-	set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /JMC" )
+	set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP /arch:AVX2" )
+	set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /arch:AVX2" )
+	set( CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /JMC" )
+	set( CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /JMC" )
+	set( CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi /GS-" )
+	set( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi /GS-" )
+	set( CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG:FULL" )
+	set( CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG:FULL" )
+else()
+	set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -msse4.2" )
+	set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse4.2" )
 endif()
 
 option( GeoToolbox_VERBOSE "Print verbose messages during CMake Configure step" OFF )
@@ -46,12 +58,6 @@ if( GeoToolbox_VERBOSE )
 	cmake_print_variables( GeoToolbox_ENABLE_LODEPNG GeoToolbox_ENABLE_SHAPEFILE )
 endif()
 
-if( MSVC )
-	#add_compile_options( /arch:AVX2 )
-else()
-	add_compile_options( -msse4.2 )
-endif()
-
 add_library( ExtraWarnings INTERFACE IMPORTED GLOBAL )
 
 if( CMAKE_COMPILER_IS_GNUCXX )
@@ -70,6 +76,15 @@ elseif( MSVC )
 	# No /Wall
 	# 4068: unknown pragma
 	target_compile_options( ExtraWarnings INTERFACE /W4 /WX /wd4068 )
+endif()
+
+add_library( LinkTimeOptimization INTERFACE )
+
+if( MSVC )
+	target_compile_options( LinkTimeOptimization INTERFACE $<$<CONFIG:Release>:/GL> )
+	target_link_options( LinkTimeOptimization INTERFACE $<$<CONFIG:Release>:/LTCG> )
+else()
+	target_compile_options( LinkTimeOptimization INTERFACE $<$<CONFIG:Release>:-flto> )
 endif()
 
 add_library( MsvcNoDeprecation INTERFACE )
@@ -157,7 +172,7 @@ if( MSVC )
 	target_sources( GeoToolbox PRIVATE MsvcAnalysis.ruleset )
 endif()
 
-target_link_libraries( GeoToolbox PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance )
+target_link_libraries( GeoToolbox PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance LinkTimeOptimization )
 if ( GeoToolbox_ENABLE_EIGEN )
 	target_link_libraries( GeoToolbox PUBLIC Eigen3 )
 	target_compile_definitions( GeoToolbox PUBLIC ENABLE_EIGEN )

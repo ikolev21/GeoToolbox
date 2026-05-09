@@ -21,6 +21,7 @@ struct NanoflannStaticKdtree : SpatialIndexWrapper<TSpatialKey>
 #include "TestTools.hpp"
 
 #ifdef _MSC_VER
+#	pragma warning( disable : 4127 ) // (v143) conditional expression is constant
 #	pragma warning( disable : 4324 ) // Node: structure was padded due to alignment specifier
 #endif
 
@@ -37,6 +38,7 @@ struct NanoflannStaticKdtree : SpatialIndexWrapper<TSpatialKey>
 #include <queue>
 
 #ifdef _MSC_VER
+#	pragma warning( default : 4127 )
 #	pragma warning( default : 4324 )
 #endif
 
