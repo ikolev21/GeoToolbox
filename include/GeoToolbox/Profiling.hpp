@@ -8,12 +8,13 @@
 #include "GeoToolbox/Asserts.hpp"
 #include "GeoToolbox/StlExtensions.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
 #include <unordered_map>
 
-#define TRACK_ALLOCATED_MEMORY 01
+#define TRACK_ALLOCATED_MEMORY 1
 
 void* TrackedMalloc(size_t size);
 void TrackedFree(void* block);
@@ -63,16 +64,20 @@ namespace GeoToolbox
 			isRunning_ = false;
 		}
 
-		[[nodiscard]] int64_t ElapsedMicroseconds() const noexcept
+		// Only valid while IsRunning() is true
+		[[nodiscard]] int64_t ElapsedMicroseconds() const
 		{
 			using namespace std::chrono;
-			return isRunning_ ? int64_t(duration_cast<microseconds>(steady_clock::now() - start_).count()) : 0;
+			DEBUG_ASSERT(isRunning_);
+			return int64_t(duration_cast<microseconds>(steady_clock::now() - start_).count());
 		}
 
-		[[nodiscard]] int ElapsedMilliseconds() const noexcept
+		// Only valid while IsRunning() is true
+		[[nodiscard]] int ElapsedMilliseconds() const
 		{
 			using namespace std::chrono;
-			return isRunning_ ? int(duration_cast<milliseconds>(steady_clock::now() - start_).count()) : 0;
+			DEBUG_ASSERT(isRunning_);
+			return int(duration_cast<milliseconds>(steady_clock::now() - start_).count());
 		}
 	};
 
@@ -228,19 +233,10 @@ namespace GeoToolbox
 		{
 		}
 
+		// Explicitly defaulted to change default move behavior to copying, to avoid leaving a moved-from object with a null pointer
 		TotalAllocatedStats(TotalAllocatedStats const&) noexcept = default;
 		TotalAllocatedStats& operator=(TotalAllocatedStats const&) noexcept = default;
 
-		TotalAllocatedStats(TotalAllocatedStats&& other) noexcept
-			: stats(other.stats)
-		{
-		}
-
-		TotalAllocatedStats& operator=(TotalAllocatedStats&& other) noexcept
-		{
-			stats = other.stats;
-			return *this;
-		}
 
 		void Add(std::size_t size, std::size_t count = 1) const
 		{
@@ -312,13 +308,13 @@ namespace GeoToolbox
 				throw std::bad_alloc{};
 			}
 
-			stats_.Add(count, sizeof(value_type));
+			stats_.Add(sizeof(value_type), count);
 			return TAllocator::allocate(count);
 		}
 
 		void deallocate(pointer ptr, size_type count)
 		{
-			stats_.Remove(count, sizeof(value_type));
+			stats_.Remove(sizeof(value_type), count);
 			TAllocator::deallocate(ptr, count);
 		}
 
@@ -330,7 +326,7 @@ namespace GeoToolbox
 		friend bool operator==(ProfileAllocator const& a, ProfileAllocator const& b) noexcept
 		{
 			//return static_cast<TAllocator const&>( a ) == static_cast<TAllocator const&>( b );
-			return a.stats_ == b.stats_;
+			return a.stats_.stats == b.stats_.stats;
 		}
 
 		friend bool operator!=(ProfileAllocator const& a, ProfileAllocator const& b) noexcept
@@ -599,7 +595,7 @@ namespace GeoToolbox
 			}
 		}
 
-		[[nodiscard]] bool NextIteration() noexcept
+		[[nodiscard]] bool NextIteration()
 		{
 			if (!timer_.IsRunning())
 			{

@@ -11,7 +11,7 @@ using namespace std;
 
 #if TRACK_ALLOCATED_MEMORY
 
-#if 01
+#if 1
 
 void* TrackedMalloc(size_t size)
 {

@@ -5,11 +5,14 @@
 
 #pragma once
 
+#include "Asserts.hpp"
+
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cstdint>
-#include <execution>
+#include <cwctype>
 #include <iterator>
 #include <memory>
 #include <memory_resource>
@@ -102,10 +105,9 @@ namespace GeoToolbox
 	{
 		using std::begin;
 		using std::end;
-		for (
-			auto iteratorA = begin(containerA), iteratorB = begin(containerB);
-			iteratorA != end(containerA) && iteratorB != end(containerB);
-			++iteratorA, ++iteratorB)
+		auto iteratorA = begin(containerA);
+		auto iteratorB = begin(containerB);
+		for (; iteratorA != end(containerA) && iteratorB != end(containerB); ++iteratorA, ++iteratorB)
 		{
 			if (!predicate(*iteratorA, *iteratorB))
 			{
@@ -113,7 +115,8 @@ namespace GeoToolbox
 			}
 		}
 
-		return true;
+		// Ranges of unequal length are not "all-of" equal (mirrors the two-range std::equal)
+		return iteratorA == end(containerA) && iteratorB == end(containerB);
 	}
 
 	template <class TContainer, class TPredicate>
@@ -167,7 +170,7 @@ namespace GeoToolbox
 		{
 			if constexpr (std::is_same_v<TContainer, TDestContainer>)
 			{
-				ASSERT(&container != &result && "Cannot transform a container of non-default-constructible elements into itself");
+				ASSERT(&container != &result, "Cannot transform a container of non-default-constructible elements into itself");
 			}
 
 			if (!appendResult)
@@ -207,9 +210,60 @@ namespace GeoToolbox
 	template <typename C>
 	struct CaseInsensitiveCharTraits : std::char_traits<C>
 	{
+		static C ToUpper(C c)
+		{
+			if constexpr (std::is_same_v<C, char>)
+			{
+				// std::toupper has undefined behavior for values not representable as unsigned char (e.g. negative char), so route the character through unsigned char first
+				return static_cast<C>(std::toupper(static_cast<unsigned char>(c)));
+			}
+			else
+			{
+				static_assert(std::is_same_v<C, wchar_t>, "CaseInsensitiveCharTraits supports only char and wchar_t");
+				return static_cast<C>(std::towupper(static_cast<std::wint_t>(c)));
+			}
+		}
+
 		static bool eq(C c1, C c2)
 		{
-			return std::toupper(c1) == std::toupper(c2);
+			return ToUpper(c1) == ToUpper(c2);
+		}
+
+		static bool lt(C c1, C c2)
+		{
+			return ToUpper(c1) < ToUpper(c2);
+		}
+
+		// Need to override compare/find in addition to eq/lt so algorithms built on them (like Starts/EndsWith) get to use our eq/lt versions
+		static int compare(C const* s1, C const* s2, std::size_t count)
+		{
+			for (std::size_t i = 0; i < count; ++i)
+			{
+				if (lt(s1[i], s2[i]))
+				{
+					return -1;
+				}
+
+				if (lt(s2[i], s1[i]))
+				{
+					return 1;
+				}
+			}
+
+			return 0;
+		}
+
+		static C const* find(C const* s, std::size_t count, C const& c)
+		{
+			for (std::size_t i = 0; i < count; ++i)
+			{
+				if (eq(s[i], c))
+				{
+					return s + i;
+				}
+			}
+
+			return nullptr;
 		}
 	};
 
@@ -238,37 +292,37 @@ namespace GeoToolbox
 	}
 
 	template <typename C, class TTraits>
-	constexpr bool StartsWithImpl(std::basic_string_view<C> const& text, std::basic_string_view<C> const& prefix)
+	constexpr bool StartsWithImpl(std::basic_string_view<C> text, std::basic_string_view<C> prefix)
 	{
 		return text.size() >= prefix.size() && TTraits::compare(text.data(), prefix.data(), prefix.size()) == 0;
 	}
 
 	template <typename C, class TTraits>
-	constexpr bool EndsWithImpl(std::basic_string_view<C> const& text, std::basic_string_view<C> const& suffix)
+	constexpr bool EndsWithImpl(std::basic_string_view<C> text, std::basic_string_view<C> suffix)
 	{
 		return text.size() >= suffix.size() && TTraits::compare(text.data() + (text.size() - suffix.size()), suffix.data(), suffix.size()) == 0;
 	}
 
 	template <template <typename> class TTraits = std::char_traits>
-	constexpr bool StartsWith(std::string_view const& text, std::string_view const& prefix)
+	constexpr bool StartsWith(std::string_view text, std::string_view prefix)
 	{
 		return StartsWithImpl<char, TTraits<char>>(text, prefix);
 	}
 
 	template <template <typename> class TTraits = std::char_traits>
-	constexpr bool StartsWith(std::wstring_view const& text, std::wstring_view const& prefix)
+	constexpr bool StartsWith(std::wstring_view text, std::wstring_view prefix)
 	{
 		return StartsWithImpl<wchar_t, TTraits<wchar_t>>(text, prefix);
 	}
 
 	template <template <typename> class TTraits = std::char_traits>
-	constexpr bool EndsWith(std::string_view const& text, std::string_view const& suffix)
+	constexpr bool EndsWith(std::string_view text, std::string_view suffix)
 	{
 		return EndsWithImpl<char, TTraits<char>>(text, suffix);
 	}
 
 	template <template <typename> class TTraits = std::char_traits>
-	constexpr bool EndsWith(std::wstring_view const& text, std::wstring_view const& suffix)
+	constexpr bool EndsWith(std::wstring_view text, std::wstring_view suffix)
 	{
 		return EndsWithImpl<wchar_t, TTraits<wchar_t>>(text, suffix);
 	}
@@ -326,36 +380,12 @@ namespace GeoToolbox
 		return ReplaceFirstImpl<wchar_t>(text, from, to);
 	}
 
-	template <class TContainer, typename T>
-	[[nodiscard]] constexpr auto ParallelFind(TContainer const& container, T const& value)
-	{
-		using std::begin;
-		using std::end;
-		return std::find(std::execution::par, begin(container), end(container), value);
-	}
-
-	template <class TContainer, class TPredicate>
-	[[nodiscard]] constexpr auto ParallelFindIf(TContainer const& container, TPredicate predicate)
-	{
-		using std::begin;
-		using std::end;
-		return std::find_if(std::execution::par, begin(container), end(container), predicate);
-	}
-
 	template <class TContainer, class TPredicate>
 	[[nodiscard]] int CountIf(TContainer const& container, TPredicate predicate)
 	{
 		using std::begin;
 		using std::end;
 		return int(std::count_if(begin(container), end(container), predicate));
-	}
-
-	template <class TContainer, class TPredicate>
-	[[nodiscard]] int ParallelCountIf(TContainer const& container, TPredicate predicate)
-	{
-		using std::begin;
-		using std::end;
-		return int(std::count_if(std::execution::par, begin(container), end(container), predicate));
 	}
 
 
@@ -579,12 +609,12 @@ namespace GeoToolbox
 
 		explicit PoolAllocator(std::pmr::memory_resource* upstream, std::size_t maxBlockSize = NMaxBlockSize, std::size_t maxBlocksPerChunk = NMaxBlocksPerChunk)
 			: BaseType{ new TPoolResource(std::pmr::pool_options{ maxBlocksPerChunk, maxBlockSize }, upstream != nullptr ? upstream : std::pmr::get_default_resource()) }
-			, resource_{ static_cast<TPoolResource*>( BaseType::resource() ) }
+			, resource_{ static_cast<TPoolResource*>(BaseType::resource()) }
 		{
 		}
 
 		template <class T2, std::size_t NMaxBlockSizeOther, std::size_t NMaxBlocksPerChunkOther>
-		explicit PoolAllocator( PoolAllocator<T2, TPoolResource, NMaxBlockSizeOther, NMaxBlocksPerChunkOther> const& other )
+		explicit PoolAllocator(PoolAllocator<T2, TPoolResource, NMaxBlockSizeOther, NMaxBlocksPerChunkOther> const& other)
 			: BaseType{ other.resource() }
 			, resource_{ other.resource_ }
 		{
@@ -634,7 +664,7 @@ namespace GeoToolbox
 		{
 		}
 
-		PointerOrInt(std::int64_t value)
+		/*explicit(false)*/ PointerOrInt(std::int64_t value)
 		{
 			*this = value;
 		}
@@ -652,7 +682,8 @@ namespace GeoToolbox
 		[[nodiscard]] std::int64_t GetInt() const
 		{
 			DEBUG_ASSERT(IsInt());
-			return storage_ / 2;
+			// Exact inverse of the value * 2 + 1 encoding. storage_ is always odd, so (storage_ - 1) is even and the division never truncates
+			return (storage_ - 1) / 2;
 		}
 
 		[[nodiscard]] T* get() const

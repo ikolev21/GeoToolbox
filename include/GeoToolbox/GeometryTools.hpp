@@ -28,7 +28,7 @@ namespace GeoToolbox
 	template <class T>
 	struct VectorTraits
 	{
-		static constexpr size_t Dimensions = 0;
+		static constexpr int Dimensions = 0;
 
 		using ScalarType = std::int8_t;
 
@@ -89,7 +89,7 @@ namespace GeoToolbox
 	template <class TVector, typename TScalar, size_t NDimensions>
 	struct VectorTraitsDefault
 	{
-		static constexpr auto Dimensions = std::is_arithmetic_v<TScalar> ? NDimensions : 0;
+		static constexpr int Dimensions = std::is_arithmetic_v<TScalar> ? int(NDimensions) : 0;
 
 		using ScalarType = TScalar;
 
@@ -346,7 +346,7 @@ namespace GeoToolbox
 
 		static constexpr auto IsConstexpr = false;
 
-		static constexpr auto Dimensions = NDimensions;
+		static constexpr int Dimensions = int(NDimensions);
 
 		using ScalarType = TScalar;
 
@@ -668,6 +668,18 @@ namespace GeoToolbox
 			return *this;
 		}
 
+		void SetLowEnd(int axis, ScalarType newValue)
+		{
+			DEBUG_ASSERT(newValue <= ends_[1][axis]);
+			ends_[0][axis] = newValue;
+		}
+
+		void SetHighEnd(int axis, ScalarType newValue)
+		{
+			DEBUG_ASSERT(newValue >= ends_[0][axis]);
+			ends_[1][axis] = newValue;
+		}
+
 		[[nodiscard]] constexpr Box GetReducedFromAbove(int axis, ScalarType newMaximum) const
 		{
 			auto newMax = ends_[1];
@@ -777,7 +789,7 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] bool Overlap(Box<TVector> const& a, Box<TVector> const& b) noexcept
 	{
-		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
+		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
 			if (a.Max()[i] < b.Min()[i] || a.Min()[i] > b.Max()[i])
 			{
@@ -791,7 +803,7 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] bool Contains(Box<TVector> const& a, Box<TVector> const& b) noexcept
 	{
-		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
+		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
 			if (a.Min()[i] > b.Min()[i] || a.Max()[i] < b.Max()[i])
 			{
@@ -805,7 +817,7 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] bool Overlap(Box<TVector> const& box, TVector const& point) noexcept
 	{
-		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
+		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
 			if (point[i] < box.Min()[i] || point[i] > box.Max()[i])
 			{
@@ -821,7 +833,7 @@ namespace GeoToolbox
 	{
 		auto min = a.Min();
 		auto max = a.Max();
-		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
+		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
 			if (min[i] > b.Max()[i] || max[i] < b.Min()[i])
 			{
@@ -846,7 +858,7 @@ namespace GeoToolbox
 	[[nodiscard]] typename Box<TVector>::VectorType GetClosestPointOnBox(Box<TVector> const& box, typename Box<TVector>::VectorType targetPoint)
 	{
 		TVector closest{} /* [[indeterminate]] */;
-		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
+		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
 			closest[i] = std::clamp(targetPoint[i], box.Min()[i], box.Max()[i]);
 		}
@@ -870,7 +882,7 @@ namespace GeoToolbox
 	[[nodiscard]] auto GetDistanceSquared(TVector const& point, Box<TVector> const& box)
 	{
 		typename VectorTraits<TVector>::ScalarType result{ 0 };
-		for (auto i = 0; i < int(VectorTraits<TVector>::Dimensions); ++i)
+		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
 			if (point[i] < box.Min()[i])
 			{

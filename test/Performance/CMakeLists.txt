@@ -93,7 +93,7 @@ if( GeoToolbox_ENABLE_NANOFLANN )
 
 	target_compile_definitions( GeoToolbox.PerfTest PRIVATE ENABLE_NANOFLANN )
 	target_link_libraries( GeoToolbox.PerfTest PRIVATE nanoflann::nanoflann )
-	target_sources( GeoToolbox.PerfTest PRIVATE ${FETCHCONTENT_SOURCE_DIR_NANOFLANN}/include/nanoflann.hpp )
+	target_sources( GeoToolbox.PerfTest PRIVATE ${nanoflann_SOURCE_DIR}/include/nanoflann.hpp )
 endif()
 
 option( GeoToolbox_ENABLE_ALGLIB "Include tests with the ALGLIB C++ library, auto-downloaded from https://www.alglib.net/download.php" OFF )
@@ -128,9 +128,9 @@ if( GeoToolbox_ENABLE_TIDWALL_RTREE )
 
 	FetchContent_MakeAvailable(TidwallRtree)
 
-	add_library( TidwallRtree STATIC ${FETCHCONTENT_SOURCE_DIR_TIDWALLRTREE}/rtree.c ${FETCHCONTENT_SOURCE_DIR_TIDWALLRTREE}/rtree.h )
+	add_library( TidwallRtree STATIC ${tidwallrtree_SOURCE_DIR}/rtree.c ${tidwallrtree_SOURCE_DIR}/rtree.h )
 	target_compile_definitions( TidwallRtree PRIVATE DIMS=${GeoToolbox_TIDWALL_DIMENSIONS} )
-	target_include_directories( TidwallRtree PUBLIC ${FETCHCONTENT_SOURCE_DIR_TIDWALLRTREE} )
+	target_include_directories( TidwallRtree PUBLIC ${tidwallrtree_SOURCE_DIR} )
 	if( 1 )
 		target_compile_definitions( TidwallRtree PRIVATE RTREE_NOATOMICS )
 	else()

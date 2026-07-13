@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+// ReSharper disable once CppUnusedIncludeDirective - false positive, needed by GCC
 #include <cmath>
 #include <iostream>
 

@@ -222,7 +222,7 @@ namespace GeoToolbox
 	class QueryIterator
 	{
 		using ScalarType = typename VectorTraits<TVector>::ScalarType;
-		static constexpr auto Dimensions = int(VectorTraits<TVector>::Dimensions);
+		static constexpr auto Dimensions = VectorTraits<TVector>::Dimensions;
 
 
 		std::array<int, Dimensions> index_{ -1 };
