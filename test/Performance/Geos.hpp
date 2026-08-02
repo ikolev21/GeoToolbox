@@ -13,27 +13,27 @@ Of the various spatial indices implemented in GEOS, geos::index::strtree::Templa
 All of these have wrappers here, but just TemplateSTRtree is included in the list of indices to test, the others are commented-out in the IndicesToTest definition in SpatialIndexTest.cpp
 */
 
-#include "SpatialIndexWrapper.hpp"
+#include "SpatialIndexAdapter.hpp"
 
 #ifndef ENABLE_GEOS
 
 template <typename TSpatialKey>
-struct GeosTemplateStrTree : SpatialIndexWrapper<TSpatialKey>
+struct GeosTemplateStrTreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
 template <typename TSpatialKey>
-struct GeosTemplateKdTree : SpatialIndexWrapper<TSpatialKey>
+struct GeosTemplateKdTreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
 template <typename TSpatialKey>
-struct GeosQuadTree : SpatialIndexWrapper<TSpatialKey>
+struct GeosQuadTreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
 template <typename TSpatialKey>
-struct GeosVertexSequencePackedRtree : SpatialIndexWrapper<TSpatialKey>
+struct GeosVertexSequencePackedRtreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
@@ -63,7 +63,7 @@ geos::geom::Envelope ToEnvelope(GeoToolbox::Box<TVector> const& box)
 }
 
 template <typename TSpatialKey, bool DimensionsMatch = GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == 2>
-struct GeosTemplateStrTree : SpatialIndexWrapper<TSpatialKey>
+struct GeosTemplateStrTreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
 	using BoxType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::BoxType;
@@ -164,7 +164,7 @@ struct GeosTemplateStrTree : SpatialIndexWrapper<TSpatialKey>
 		index.build();
 	}
 
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
 	{
 		// For some reason TemplateSTRtree::query() isn't const
 		auto& index = *const_cast<IndexType*>( static_cast<IndexType const*>(indexPtr.get()));
@@ -178,13 +178,13 @@ struct GeosTemplateStrTree : SpatialIndexWrapper<TSpatialKey>
 };
 
 template <typename TSpatialKey>
-struct GeosTemplateStrTree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
+struct GeosTemplateStrTreeAdapter<TSpatialKey, false> : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
 
 template <class TSpatialKey, bool DimensionsMatch = GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == 2>
-struct GeosQuadTree : SpatialIndexWrapper<TSpatialKey>
+struct GeosQuadTreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
 
@@ -261,7 +261,7 @@ struct GeosQuadTree : SpatialIndexWrapper<TSpatialKey>
 	};
 
 	// Non-const query method??
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
 	{
 		auto& index = *static_cast<IndexType*>(indexPtr.get());
 
@@ -274,13 +274,13 @@ struct GeosQuadTree : SpatialIndexWrapper<TSpatialKey>
 };
 
 template <typename TSpatialKey>
-struct GeosQuadTree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
+struct GeosQuadTreeAdapter<TSpatialKey, false> : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
 
 template <class TSpatialKey, bool IsSupported = GeoToolbox::SpatialKeyIsPoint<TSpatialKey> && GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == 2>
-struct GeosVertexSequencePackedRtree : SpatialIndexWrapper<TSpatialKey>
+struct GeosVertexSequencePackedRtreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
 
@@ -310,7 +310,7 @@ struct GeosVertexSequencePackedRtree : SpatialIndexWrapper<TSpatialKey>
 		return std::make_shared<IndexType>(coordinates, geos::index::VertexSequencePackedRtree{ *coordinates });
 	}
 
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
 	{
 		auto& index = *static_cast<IndexType const*>(indexPtr.get());
 
@@ -322,13 +322,13 @@ struct GeosVertexSequencePackedRtree : SpatialIndexWrapper<TSpatialKey>
 
 // Turn off for box keys
 template <typename TSpatialKey>
-struct GeosVertexSequencePackedRtree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
+struct GeosVertexSequencePackedRtreeAdapter<TSpatialKey, false> : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
 
 template <class TSpatialKey, bool IsSupported = GeoToolbox::SpatialKeyIsPoint<TSpatialKey> && GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == 2>
-struct GeosKdTree : SpatialIndexWrapper<TSpatialKey>
+struct GeosKdTreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
 
@@ -369,7 +369,7 @@ struct GeosKdTree : SpatialIndexWrapper<TSpatialKey>
 	}
 
 	// Non-const query method??
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
 	{
 		auto& index = *static_cast<IndexType*>(indexPtr.get());
 
@@ -382,7 +382,7 @@ struct GeosKdTree : SpatialIndexWrapper<TSpatialKey>
 
 // Turn off for box keys
 template <typename TSpatialKey>
-struct GeosKdTree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
+struct GeosKdTreeAdapter<TSpatialKey, false> : SpatialIndexAdapter<TSpatialKey>
 {
 };
 

@@ -8,11 +8,13 @@ add_executable( GeoToolbox.PerfTest
 
 	AlgLib.hpp
 	Boost.hpp
+	KdBoxTreeAdapter.hpp
+	KdBoxTreePerfTest.cpp
 	Geos.hpp
 	NanoflannAdapter.hpp
 	SpatialIndexStd.cpp
 	SpatialIndexTest.cpp
-	SpatialIndexWrapper.hpp
+	SpatialIndexAdapter.hpp
 	TestTools.cpp TestTools.hpp
 	TidwallRtree.hpp
 )
@@ -58,8 +60,8 @@ if( GeoToolbox_ENABLE_GEOS )
 
 	FetchContent_Declare(
 		Geos
-		URL https://download.osgeo.org/geos/geos-3.13.0.tar.bz2
-		URL_HASH SHA1=0510841658bbfb503295e6687befa0611cfc7954
+		URL https://download.osgeo.org/geos/geos-3.14.1.tar.bz2
+		URL_HASH SHA1=1c5f3ca6d099fcedf85e030abbe7e3cc91231a55
 		DOWNLOAD_NAME geos.tar.bz2
 		DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 	)
@@ -83,7 +85,7 @@ if( GeoToolbox_ENABLE_NANOFLANN )
 	FetchContent_Declare(
 		Nanoflann
 		GIT_REPOSITORY https://github.com/jlblancoc/nanoflann.git
-		GIT_TAG        v1.9.0
+		GIT_TAG        1.10.1
 	)
 
 	set( NANOFLANN_BUILD_EXAMPLES OFF CACHE INTERNAL "" )

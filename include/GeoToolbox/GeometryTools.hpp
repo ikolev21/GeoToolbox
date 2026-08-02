@@ -535,8 +535,10 @@ namespace GeoToolbox
 
 	public:
 
+		// The empty box is represented with reversed bounds: min at +infinity, max at -infinity. This lets the common operations (union, Overlap, ...) treat it correctly with their ordinary
+		// min/max/comparisons and no special case, and keeps NaN out of the type so that enabling floating-point exceptions still traps the first genuine NaN rather than firing on empty boxes.
 		constexpr Box() noexcept
-			: ends_{ NaN<VectorType>(), NaN<VectorType>() }
+			: ends_{ Flat<VectorType>(std::numeric_limits<ScalarType>::infinity()), Flat<VectorType>(-std::numeric_limits<ScalarType>::infinity()) }
 		{
 		}
 
@@ -545,6 +547,8 @@ namespace GeoToolbox
 		{
 		}
 
+		// Precondition: min <= max on every axis. This rejects both inverted bounds and any NaN input (NaN <= x is false); construct the empty box with the default constructor, not by
+		// passing reversed bounds here.
 		constexpr Box(VectorType min, VectorType max)
 			: ends_{ min, max }
 		{
@@ -554,7 +558,10 @@ namespace GeoToolbox
 		template <class TBox>
 		static Box Convert( TBox const& other )
 		{
-			return { GeoToolbox::Convert<VectorType>( other.Min() ), GeoToolbox::Convert<VectorType>( other.Max() ) };
+			// Preserve emptiness directly: converting the reversed bounds would trip the min <= max precondition
+			return other.IsEmpty()
+				? Box{}
+				: Box{ GeoToolbox::Convert<VectorType>( other.Min() ), GeoToolbox::Convert<VectorType>( other.Max() ) };
 		}
 
 		static constexpr Box Bound(VectorType a, VectorType b)
@@ -590,8 +597,8 @@ namespace GeoToolbox
 
 		[[nodiscard]] constexpr bool IsEmpty() const noexcept
 		{
-			// std::isnan turned constexpr only in C++23
-			return ends_[0][0] != ends_[0][0];
+			// Only the empty box has min at +infinity (a real box, even an unbounded one, has a finite or -infinity min)
+			return ends_[0][0] == std::numeric_limits<ScalarType>::infinity();
 		}
 
 		[[nodiscard]] constexpr VectorType const& Min() const noexcept
@@ -610,8 +617,10 @@ namespace GeoToolbox
 			return ends_[i];
 		}
 
-		[[nodiscard]] constexpr VectorType Center() const noexcept
+		// Precondition: the box is not empty (the center of an empty box is +infinity + -infinity = NaN)
+		[[nodiscard]] constexpr VectorType Center() const
 		{
+			DEBUG_ASSERT(!IsEmpty());
 			return (ends_[0] + ends_[1]) * 0.5;
 		}
 
@@ -637,34 +646,27 @@ namespace GeoToolbox
 
 		Box& Add(VectorType const& point)
 		{
-			// *this may be NaN, point may not
 			DEBUG_ASSERT(AllOf(point, [](auto x) { return !std::isnan(x); }));
 
-			// Can't use std::min/max here, this must work for empty boxes that use nan coordinates, hence the weird comparisons
-			ends_[0] = ComponentApply(ends_[0], point, [](auto x, auto y) { return !(x <= y) ? y : x; });
-			ends_[1] = ComponentApply(ends_[1], point, [](auto x, auto y) { return !(x >= y) ? y : x; });
+			// If *this is empty (min +infinity, max -infinity) these absorb the point exactly: min(+inf, p) == p == max(-inf, p)
+			ends_[0] = GeoToolbox::Min(ends_[0], point);
+			ends_[1] = GeoToolbox::Max(ends_[1], point);
 			return *this;
 		}
 
 		Box& Add(Box const& other)
 		{
-			if (!other.IsEmpty())
-			{
-				Add(other.Min());
-				Add(other.Max());
-			}
-
+			// An empty other leaves *this unchanged (its +infinity min / -infinity max lose to any real bound), and vice versa
+			ends_[0] = GeoToolbox::Min(ends_[0], other.ends_[0]);
+			ends_[1] = GeoToolbox::Max(ends_[1], other.ends_[1]);
 			return *this;
 		}
 
 		Box& Move(VectorType const& point)
 		{
-			if (!IsEmpty())
-			{
-				ends_[0] += point;
-				ends_[1] += point;
-			}
-
+			// Moving the empty box keeps it empty (+/-infinity are unchanged by adding a finite offset)
+			ends_[0] += point;
+			ends_[1] += point;
 			return *this;
 		}
 
@@ -696,23 +698,21 @@ namespace GeoToolbox
 
 		constexpr Box GetScaled(ScalarType factor) const
 		{
-			return factor > 0 ? FromCenterAndSizes(Center(), Sizes() * factor) : *this;
+			return IsEmpty() || factor <= 0 ? *this : FromCenterAndSizes(Center(), Sizes() * factor);
 		}
 
 		friend constexpr Box operator+(Box const& box, VectorType const& point)
 		{
-			// box may be empty, point may not be NaN
 			DEBUG_ASSERT(AllOf(point, [](auto x) { return !std::isnan(x); }));
-			return Box{
-				ComponentApply(box.ends_[0], point, [](auto x, auto y) { return !(x <= y) ? y : x; }),
-				ComponentApply(box.ends_[1], point, [](auto x, auto y) { return !(x >= y) ? y : x; }) };
+
+			// Empty box: min(+inf, p) == p == max(-inf, p), so the result is the single-point box, as intended
+			return Box{ GeoToolbox::Min(box.ends_[0], point), GeoToolbox::Max(box.ends_[1], point) };
 		}
 
 		friend constexpr bool operator==(Box const& a, Box const& b)
 		{
-			// std::array::operator== is constexpr only in C++20
-			return a.IsEmpty() && b.IsEmpty()
-				|| AllOf(a.ends_[0], b.ends_[0], std::equal_to<>()) && AllOf(a.ends_[1], b.ends_[1], std::equal_to<>());
+			// std::array::operator== is constexpr only in C++20. Two empty boxes compare equal here because their matching +/-infinity bounds do.
+			return AllOf(a.ends_[0], b.ends_[0], std::equal_to<>()) && AllOf(a.ends_[1], b.ends_[1], std::equal_to<>());
 		}
 	};
 
@@ -789,6 +789,7 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] bool Overlap(Box<TVector> const& a, Box<TVector> const& b) noexcept
 	{
+		// An empty box needs no special case: its reversed bounds (min +infinity, max -infinity) make the separation test true against any real box, so an empty operand overlaps nothing.
 		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
 			if (a.Max()[i] < b.Min()[i] || a.Min()[i] > b.Max()[i])
@@ -801,8 +802,12 @@ namespace GeoToolbox
 	}
 
 	template <class TVector>
-	[[nodiscard]] bool Contains(Box<TVector> const& a, Box<TVector> const& b) noexcept
+	[[nodiscard]] bool Contains(Box<TVector> const& a, Box<TVector> const& b)
 	{
+		// Precondition: neither box is empty. "Does a contain the empty box?" has no intuitive answer (the empty box is a subset of everything yet has no points), so containment of/by
+		// an empty box is simply forbidden.
+		DEBUG_ASSERT(!a.IsEmpty() && !b.IsEmpty());
+
 		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
 			if (a.Min()[i] > b.Min()[i] || a.Max()[i] < b.Max()[i])
@@ -817,6 +822,7 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] bool Overlap(Box<TVector> const& box, TVector const& point) noexcept
 	{
+		// An empty box needs no special case: its +infinity min / -infinity max fail the test below for any point
 		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
 			if (point[i] < box.Min()[i] || point[i] > box.Max()[i])
@@ -831,6 +837,7 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] Box<TVector> Intersect(Box<TVector> const& a, Box<TVector> const& b) noexcept
 	{
+		// An empty operand needs no special case: its reversed bounds make the separation test below fire, returning the (empty) default box.
 		auto min = a.Min();
 		auto max = a.Max();
 		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
@@ -857,6 +864,9 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] typename Box<TVector>::VectorType GetClosestPointOnBox(Box<TVector> const& box, typename Box<TVector>::VectorType targetPoint)
 	{
+		// Precondition: the box is not empty (an empty box has no points, and std::clamp against its reversed bounds is undefined)
+		DEBUG_ASSERT(!box.IsEmpty());
+
 		TVector closest{} /* [[indeterminate]] */;
 		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
@@ -881,6 +891,9 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] auto GetDistanceSquared(TVector const& point, Box<TVector> const& box)
 	{
+		// Precondition: the box is not empty (the distance to a box with no points is meaningless)
+		DEBUG_ASSERT(!box.IsEmpty());
+
 		typename VectorTraits<TVector>::ScalarType result{ 0 };
 		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
 		{
@@ -900,6 +913,9 @@ namespace GeoToolbox
 	template <class TVector>
 	[[nodiscard]] auto GetDistanceSquared(TVector const& point, Box<TVector> const& box, int axisIndex) -> typename VectorTraits<TVector>::ScalarType
 	{
+		// Precondition: the box is not empty (see the whole-box overload)
+		DEBUG_ASSERT(!box.IsEmpty());
+
 		if (point[axisIndex] < box.Min()[axisIndex])
 		{
 			return Square(box.Min()[axisIndex] - point[axisIndex]);
@@ -955,6 +971,7 @@ namespace GeoToolbox
 	}
 
 
+	// The circle always lies in the XY plane: for N > 2 vectors the remaining components are left zero. Callers that need a 3D arrangement offset the result themselves.
 	template <class TVector, class TIterator>
 	void MakeCircle(TIterator output, typename VectorTraits<TVector>::ScalarType radius, int vertexCount)
 	{

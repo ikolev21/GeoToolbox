@@ -1,0 +1,32 @@
+diff --git a/include/geos/index/strtree/TemplateSTRtree.h b/include/geos/index/strtree/TemplateSTRtree.h
+index 381aeee..f3af3cb 100644
+--- a/include/geos/index/strtree/TemplateSTRtree.h
++++ b/include/geos/index/strtree/TemplateSTRtree.h
+@@ -29,6 +29,12 @@
+ #include <queue>
+ #include <mutex>
+ 
++namespace GeoToolbox
++{
++    void AddQueryStats_ObjectTestsCount();
++    void AddQueryStats_VisitedNodesCount();
++}
++
+ namespace geos {
+ namespace index {
+ namespace strtree {
+@@ -598,8 +604,14 @@ protected:
+                Visitor&& visitor) {
+ 
+         assert(!node.isLeaf());
++        GeoToolbox::AddQueryStats_VisitedNodesCount();
+ 
+         for (auto *child = node.beginChildren(); child < node.endChildren(); ++child) {
++            if (child->isLeaf())
++            {
++                GeoToolbox::AddQueryStats_ObjectTestsCount();
++            }
++
+             if (child->boundsIntersect(queryEnv)) {
+                 if (child->isLeaf()) {
+                     if (!child->isDeleted()) {

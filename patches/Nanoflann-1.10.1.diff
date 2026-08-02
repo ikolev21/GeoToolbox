@@ -1,0 +1,21 @@
+diff --git a/include/nanoflann.hpp b/include/nanoflann.hpp
+index aac4e23..e2428e1 100644
+--- a/include/nanoflann.hpp
++++ b/include/nanoflann.hpp
+@@ -1246,12 +1246,16 @@ class KDTreeBaseClass
+         // If this is a leaf node, then do check and return.
+         if (!node->child1)  // (if one node is nullptr, both are)
+         {
++            GeoToolbox::AddQueryStats_VisitedNodesCount();
++
+             // Hoist the point length out of the per-point loop. For a
+             // fixed-size tree (DIM > 0) this is a compile-time constant; for a
+             // runtime dimension it avoids re-reading obj.dim_ on every point.
+             const Size dim = veclen(obj);
+             for (Offset i = node->node_type.lr.left; i < node->node_type.lr.right; ++i)
+             {
++                GeoToolbox::AddQueryStats_ObjectTestsCount();
++
+                 const IndexType accessor = vAcc_[i];
+                 if (!obj.isActive(accessor)) continue;
+                 DistanceType dist = obj.distance_.evalMetric(vec, accessor, dim);

@@ -8,13 +8,13 @@
 #ifndef ENABLE_TIDWALL_RTREE
 
 template <typename TSpatialKey>
-struct TidwallRtree : SpatialIndexWrapper<TSpatialKey>
+struct TidwallRtreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
 #else
 
-#include "SpatialIndexWrapper.hpp"
+#include "SpatialIndexAdapter.hpp"
 #include "TestTools.hpp"
 #include "GeoToolbox/Profiling.hpp"
 #include "GeoToolbox/SpatialTools.hpp"
@@ -80,7 +80,7 @@ struct RtreeDeleter
 };
 
 template <typename TSpatialKey, bool DimensionsMatch = GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions == ENABLE_TIDWALL_RTREE>
-struct TidwallRtree : SpatialIndexWrapper<TSpatialKey>
+struct TidwallRtreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 	static constexpr auto Dimensions = ENABLE_TIDWALL_RTREE;
 
@@ -197,7 +197,7 @@ struct TidwallRtree : SpatialIndexWrapper<TSpatialKey>
 		return true;
 	}
 
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
 	{
 		auto index = static_cast<rtree*>(indexPtr.get());
 
@@ -209,7 +209,7 @@ struct TidwallRtree : SpatialIndexWrapper<TSpatialKey>
 };
 
 template <typename TSpatialKey>
-struct TidwallRtree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
+struct TidwallRtreeAdapter<TSpatialKey, false> : SpatialIndexAdapter<TSpatialKey>
 {
 };
 

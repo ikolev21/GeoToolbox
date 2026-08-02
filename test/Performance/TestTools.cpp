@@ -213,6 +213,13 @@ void PerfRecord::Load()
 		ins >> version;
 	}
 
+	// The columns are read by position, so an older file would be misparsed and then overwritten with the garbage
+	if (version != Version)
+	{
+		throw runtime_error{ filepath_.filename().string() + " was written in format version "s + to_string(version)
+			+ ", expected " + to_string(Version) + ". Rename or delete it, or record to another FileId" };
+	}
+
 	while (getline(infile, line))
 	{
 		istringstream ins(line);
@@ -346,8 +353,8 @@ int main(int argc, char* argv[])
 				{ "FileId", RUNTIME_ENVIRONMENT_ID, "A string to include in the name of the test results file, may be empty. Default: {def}" },
 				{ "Reset", false, "Resets the stored test results. Default: {def}" },
 				{ "Record", SelectDebugRelease(false, true), "Should the test results be recorded to a file. Default is 1 in optimized builds, 0 in debug build" },
-				{ "Index", "", "Comma-separated list of indices to run tests for, these could be partial names, comparison is case-insensitive, for example: Index=nano,geos" },
-				{ "Dataset", "", "Comma-separated list of datasets to run tests for, these could be partial names, comparison is case-insensitive, for example: Dataset=synthetic,parcels" },
+				{ "Index", "", "Comma-separated list of indices to run tests for (partial case-insensitive match), for example: Index=nano,geos" },
+				{ "Dataset", "", "Comma-separated list of datasets to run tests for (partial case-insensitive match), for example: Dataset=synthetic,parcels" },
 				{ "DatasetSize", -1, "Fixes the order of the dataset size to use (i.e. 1 means 10 element, 6 means 1 million elements). If not set, all orders from MinDatasetSize to MaxDatasetSize will be used" },
 				{ "MinDatasetSize", 2, "Minimum order of the size of the dataset, tests are executed for all orders from MinDatasetSize to MaxDatasetSize. Default: {def}" },
 				{ "MaxDatasetSize", 6, "Maximum order of the size of the dataset, tests are executed for all orders from MinDatasetSize to MaxDatasetSize. Default: {def}" },
@@ -359,16 +366,6 @@ int main(int argc, char* argv[])
 			}
 			);
 
-		if (argc == 1)
-		{
-			std::cout
-				<< "No tests are configured to run by default, please specify the name of a perf.test you'd like to run, like CompareSpatialIndices\n\n"
-				<< "Configuration keys for CompareSpatialIndices:\n"
-				<< "(either save these to " << (GetOutputPath() / "CompareSpatialIndices.cfg").generic_string() << " or pass them as -key=value on the command line after the Catch arguments and --)\n"
-				<< GetConfig().GenerateDefaultConfigFile();
-			return 0;
-		}
-
 		for (auto i = 1; i < argc; ++i)
 		{
 			if (string_view{ argv[i] } == "--")
@@ -377,6 +374,16 @@ int main(int argc, char* argv[])
 				argc = i;
 				break;
 			}
+		}
+
+		if (argc == 1)
+		{
+			std::cout
+				<< "No tests are configured to run by default, please specify the name of a perf.test you'd like to run, like CompareSpatialIndices\n\n"
+				<< "Configuration keys for CompareSpatialIndices:\n"
+				<< "(either save these to " << (GetOutputPath() / "CompareSpatialIndices.cfg").generic_string() << " or pass them as -key=value on the command line after the Catch arguments and --)\n"
+				<< GetConfig().GenerateDefaultConfigFile();
+			return 0;
 		}
 
 		Catch::Session session;
@@ -407,7 +414,7 @@ int main(int argc, char* argv[])
 		}
 
 		std::cout << "Time elapsed: " << PrintMilliSeconds(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count()) << '\n';
-		return 0;
+		return result;
 	}
 	catch (std::exception const& exc)
 	{

@@ -45,8 +45,8 @@ Distributed under the Boost Software License, Version 1.0.
   <Type Name="GeoToolbox::Box&lt;*&gt;">
     <Intrinsic Name="min" Expression="&amp;ends_._Elems[0]._Elems[0]" />
     <Intrinsic Name="max" Expression="&amp;ends_._Elems[1]._Elems[0]" />
-    <DisplayString Condition="min()[0] != min()[0]">&lt;empty&gt;</DisplayString>
-    <DisplayString Condition="min()[0] == min()[0]">{ends_._Elems[0],g} - {ends_._Elems[1],g}</DisplayString>
+    <DisplayString Condition="min()[0] &gt; max()[0]">&lt;empty&gt;</DisplayString>
+    <DisplayString Condition="min()[0] &lt;= max()[0]">{ends_._Elems[0],g} - {ends_._Elems[1],g}</DisplayString>
     <Expand>
       <Item Name="Min">ends_._Elems[0],g</Item>
       <Item Name="Max">ends_._Elems[1],g</Item>
@@ -62,6 +62,20 @@ Distributed under the Boost Software License, Version 1.0.
   <Type Name="AggregateStats&lt;*&gt;">
     <DisplayString>[{count_}] {minimum_}   {count_ > 0 ? sum_ / double( count_ ) : 0,g}   {maximum_}</DisplayString>
   </Type>
+
+  <Type Name="GeoToolbox::KdBoxTree&lt;*,*,*,*&gt;">
+    <DisplayString>Elems: {elements_.size()} Nodes: {nodes_.size()}</DisplayString>
+  </Type>
+
+  <Type Name="GeoToolbox::KdBoxTree&lt;*,*,*,*&gt;::Node">
+    <Intrinsic Name="isLeaf" Expression="splitAxis &lt; 0" />
+    <DisplayString Condition="isLeaf()">Leaf {elementsBegin} - {elementsEnd} [{elementsEnd - elementsBegin}]</DisplayString>
+    <DisplayString Condition="!isLeaf()">Split at {(int)splitAxis} Low:{lowChild} High:{highChild}</DisplayString>
+    <Expand>
+      <Item Name="Parent">parent</Item>
+    </Expand>
+  </Type>
+
 
   <Type Name="nanoflann::KDTreeBaseClass&lt;*,*,*,*,*&gt;::Node">
     <Intrinsic Name="isLeaf" Expression="child1 == 0 &amp;&amp; child2 == 0" />

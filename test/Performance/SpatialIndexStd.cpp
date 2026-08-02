@@ -3,13 +3,13 @@
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
-#include "SpatialIndexWrapper.hpp"
+#include "SpatialIndexAdapter.hpp"
 
 using namespace GeoToolbox;
 using namespace std;
 
 template <typename TSpatialKey>
-shared_ptr<void> StdVector<TSpatialKey>::Load(Dataset<TSpatialKey> const& dataset) const
+shared_ptr<void> StdVectorAdapter<TSpatialKey>::Load(Dataset<TSpatialKey> const& dataset) const
 {
 	auto const data = dataset.GetData();
 	if (data.size() > 100'000)
@@ -22,7 +22,7 @@ shared_ptr<void> StdVector<TSpatialKey>::Load(Dataset<TSpatialKey> const& datase
 }
 
 template <typename TSpatialKey>
-void StdVector<TSpatialKey>::Insert(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const
+void StdVectorAdapter<TSpatialKey>::Insert(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const
 {
 	auto& index = *static_cast<IndexType*>(indexPtr.get());
 	DEBUG_ASSERT(!Contains(index, feature));
@@ -30,7 +30,7 @@ void StdVector<TSpatialKey>::Insert(std::shared_ptr<void> const& indexPtr, Featu
 }
 
 template <typename TSpatialKey>
-bool StdVector<TSpatialKey>::Erase(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const
+bool StdVectorAdapter<TSpatialKey>::Erase(std::shared_ptr<void> const& indexPtr, FeaturePtr feature) const
 {
 	auto& index = *static_cast<IndexType*>(indexPtr.get());
 	auto const location = Find(index, feature);
@@ -49,11 +49,11 @@ bool StdVector<TSpatialKey>::Erase(std::shared_ptr<void> const& indexPtr, Featur
 	return true;
 }
 
-template struct StdVector<Vector2>;
-template struct StdVector<Vector3f>;
-template struct StdVector<Box2>;
-template struct StdVector<Box3f>;
+template struct StdVectorAdapter<Vector2>;
+template struct StdVectorAdapter<Vector3f>;
+template struct StdVectorAdapter<Box2>;
+template struct StdVectorAdapter<Box3f>;
 #if defined( ENABLE_EIGEN )
-template struct StdVector<EVector2>;
-template struct StdVector<Box<EVector2>>;
+template struct StdVectorAdapter<EVector2>;
+template struct StdVectorAdapter<Box<EVector2>>;
 #endif

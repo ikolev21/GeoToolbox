@@ -220,7 +220,8 @@ class PerfRecord
 {
 public:
 
-	static constexpr auto Version = 1;
+	// 2: dropped the 'Scalar <>' and 'Box <>' columns
+	static constexpr auto Version = 2;
 
 	struct Entry
 	{
@@ -262,8 +263,6 @@ public:
 		bool failed = false;
 
 		int queryVisitedNodes = 0;
-		GeoToolbox::QueryStats::CounterType queryScalarComparisons = 0;
-		GeoToolbox::QueryStats::CounterType queryBoxOverlaps = 0;
 		GeoToolbox::QueryStats::CounterType queryObjectTests = 0;
 
 		std::string info{};  // NOLINT(readability-redundant-member-init)
@@ -277,8 +276,6 @@ public:
 				Field{ &Stats::bestTime, "Time" },
 				Field{ &Stats::queryVisitedNodes, "NodeVisits" },
 				Field{ &Stats::queryObjectTests, "ObjTests" },
-				Field{ &Stats::queryScalarComparisons, "Scalar <>" },
-				Field{ &Stats::queryBoxOverlaps, "Box <>" },
 				Field{ &Stats::memoryDelta, "Mem Delta" },
 				Field{ &Stats::failed, "Failed" },
 				Field{ &Stats::info, "Info" });

@@ -17,7 +17,7 @@ namespace Bgi = boost::geometry::index;
 
 
 template <typename TSpatialKey>
-int BoostRtree<TSpatialKey>::QueryBox(shared_ptr<void> const& indexPtr, BoxType const& queryBox) const
+int BoostRtreeAdapter<TSpatialKey>::QueryRange(shared_ptr<void> const& indexPtr, BoxType const& queryBox) const
 {
 	auto& index = *static_cast<IndexType const*>(indexPtr.get());
 
@@ -27,7 +27,7 @@ int BoostRtree<TSpatialKey>::QueryBox(shared_ptr<void> const& indexPtr, BoxType 
 }
 
 template <typename TSpatialKey>
-double BoostRtree<TSpatialKey>::QueryNearest(shared_ptr<void> const& indexPtr, VectorType const& location, int nearestCount) const
+double BoostRtreeAdapter<TSpatialKey>::QueryNearest(shared_ptr<void> const& indexPtr, VectorType const& location, int nearestCount) const
 {
 	using ScalarType = typename SpatialKeyTraits<TSpatialKey>::ScalarType;
 
@@ -56,13 +56,13 @@ double BoostRtree<TSpatialKey>::QueryNearest(shared_ptr<void> const& indexPtr, V
 	return accumulate(nearest.begin(), nearest.end(), 0.0, [](double sum, pair<FeatureId, ScalarType> const& f) { return sum + double(f.second); });
 }
 
-template struct BoostRtree<Vector2>;
-template struct BoostRtree<Vector3f>;
-template struct BoostRtree<Box2>;
-template struct BoostRtree<Box3f>;
+template struct BoostRtreeAdapter<Vector2>;
+template struct BoostRtreeAdapter<Vector3f>;
+template struct BoostRtreeAdapter<Box2>;
+template struct BoostRtreeAdapter<Box3f>;
 #if defined( ENABLE_EIGEN )
-template struct BoostRtree<EVector2>;
-template struct BoostRtree<Box<EVector2>>;
+template struct BoostRtreeAdapter<EVector2>;
+template struct BoostRtreeAdapter<Box<EVector2>>;
 #endif
 
 

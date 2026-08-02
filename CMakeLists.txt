@@ -47,6 +47,7 @@ cmake_dependent_option( GeoToolbox_BUILD_TESTS_PERFORMANCE "Build performance te
 option( GeoToolbox_ENABLE_CODEANALYSIS "Enable code analysis tools in Release build" ON )
 option( GeoToolbox_ENABLE_EIGEN "Use Eigen for linear algebra (tested long ago, may not work currently)" OFF )
 option( GeoToolbox_ENABLE_LODEPNG "Include LodePNG for PNG image writing (enforced by GeoToolbox_BUILD_TESTS_PERFORMANCE)" OFF )
+option( GeoToolbox_ENABLE_QUERYSTATS "Count the nodes, object tests and comparisons made by each query. Slows down queries, use a separate build directory for it" OFF )
 option( GeoToolbox_ENABLE_SHAPEFILE "Include ESRI Shapefile to load datasets from and export results to SHP files (enforced by GeoToolbox_BUILD_TESTS_PERFORMANCE)" OFF )
 
 if( GeoToolbox_BUILD_TESTS_PERFORMANCE )
@@ -152,6 +153,7 @@ set( HeadersDir ${CMAKE_CURRENT_SOURCE_DIR}/include/GeoToolbox )
 
 add_library( GeoToolbox
 	${HeadersDir}/Asserts.hpp
+	${HeadersDir}/KdBoxTree.hpp
 	${HeadersDir}/Config.hpp src/Config.cpp
 	${HeadersDir}/DescribeStruct.hpp
 	${HeadersDir}/GeometryTools.hpp
@@ -183,6 +185,10 @@ endif()
 if ( GeoToolbox_ENABLE_LODEPNG )
 	target_link_libraries( GeoToolbox PRIVATE GeoToolbox.LodePNG )
 	target_compile_definitions( GeoToolbox PRIVATE ENABLE_LODEPNG )
+endif()
+if ( GeoToolbox_ENABLE_QUERYSTATS )
+	# PUBLIC, the counters are called from the tests and from the patched third-party indices
+	target_compile_definitions( GeoToolbox PUBLIC ENABLE_QUERYSTATS )
 endif()
 if ( GeoToolbox_ENABLE_SHAPEFILE )
 	target_sources( GeoToolbox PRIVATE ${HeadersDir}/ShapeFile.hpp src/ShapeFile.cpp )

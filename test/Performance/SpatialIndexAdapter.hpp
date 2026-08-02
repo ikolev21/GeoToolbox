@@ -12,7 +12,7 @@
 
 // This class defines the common interface for spatial index wrappers
 template <typename TSpatialKey>
-struct SpatialIndexWrapper
+struct SpatialIndexAdapter
 {
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
 
@@ -21,7 +21,7 @@ struct SpatialIndexWrapper
 	using FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*;
 
 
-	virtual ~SpatialIndexWrapper() = default;
+	virtual ~SpatialIndexAdapter() = default;
 
 	// Put readable spatial index name here, without tab characters. If this returns an empty string, the wrapper is considered disabled
 	[[nodiscard]] virtual std::string_view Name() const
@@ -70,7 +70,7 @@ struct SpatialIndexWrapper
 	}
 
 	// Return the count of the features found to intersect the box. Return negative value if this query is not supported
-	[[nodiscard]] virtual int QueryBox(std::shared_ptr<void> const& /*spatialIndex*/, BoxType const& /*box*/) const
+	[[nodiscard]] virtual int QueryRange(std::shared_ptr<void> const& /*spatialIndex*/, BoxType const& /*box*/) const
 	{
 		return -1;
 	}
@@ -87,11 +87,11 @@ struct SpatialIndexWrapper
 // Implementation using std containers, mostly vector
 
 template <typename TSpatialKey, class TContainer>
-struct StdContainer : SpatialIndexWrapper<TSpatialKey>
+struct StdContainerAdapter : SpatialIndexAdapter<TSpatialKey>
 {
-	using VectorType = typename SpatialIndexWrapper<TSpatialKey>::VectorType;
-	using BoxType = typename SpatialIndexWrapper<TSpatialKey>::BoxType;
-	using FeaturePtr = typename SpatialIndexWrapper<TSpatialKey>::FeaturePtr;
+	using VectorType = typename SpatialIndexAdapter<TSpatialKey>::VectorType;
+	using BoxType = typename SpatialIndexAdapter<TSpatialKey>::BoxType;
+	using FeaturePtr = typename SpatialIndexAdapter<TSpatialKey>::FeaturePtr;
 
 	using IndexType = TContainer;
 
@@ -111,13 +111,12 @@ struct StdContainer : SpatialIndexWrapper<TSpatialKey>
 		return std::make_shared<IndexType>();
 	}
 
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override
 	{
 		auto& index = *static_cast<IndexType const*>(indexPtr.get());
 		return GeoToolbox::/*Parallel*/CountIf(index, [&box](auto&& feature)
 			{
 				GeoToolbox::AddQueryStats_ObjectTestsCount();
-				GeoToolbox::AddQueryStats_BoxOverlapsCount();
 				return Overlap(box, feature->spatialKey);
 			});
 	}
@@ -137,7 +136,6 @@ struct StdContainer : SpatialIndexWrapper<TSpatialKey>
 		for (auto const& feature : index)
 		{
 			GeoToolbox::AddQueryStats_ObjectTestsCount();
-			GeoToolbox::AddQueryStats_ScalarComparisonsCount();
 			auto const distance2 = GeoToolbox::GetDistanceSquared(location, feature->spatialKey);
 			if (distance2 < nearest.back().second)
 			{
@@ -158,7 +156,7 @@ struct StdContainer : SpatialIndexWrapper<TSpatialKey>
 };
 
 template <typename TSpatialKey>
-struct StdVector : StdContainer<TSpatialKey, std::vector<GeoToolbox::Feature<TSpatialKey> const*>>
+struct StdVectorAdapter : StdContainerAdapter<TSpatialKey, std::vector<GeoToolbox::Feature<TSpatialKey> const*>>
 {
 	using FeaturePtr = GeoToolbox::Feature<TSpatialKey> const*;
 	using IndexType = std::vector<FeaturePtr>;
@@ -169,7 +167,7 @@ struct StdVector : StdContainer<TSpatialKey, std::vector<GeoToolbox::Feature<TSp
 		return "std::vector";
 	}
 
-	using BaseType = StdContainer<TSpatialKey, IndexType>;
+	using BaseType = StdContainerAdapter<TSpatialKey, IndexType>;
 
 
 	std::shared_ptr<void> Load(Dataset<TSpatialKey> const& dataset) const override;

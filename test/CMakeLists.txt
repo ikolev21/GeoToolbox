@@ -51,9 +51,11 @@ add_executable( GeoToolbox.Test
 
 	MemoryTracker.cpp
 
+	KdBoxTreeTest.cpp
 	GeometryTest.cpp
 	ProfilingTest.cpp
 	SpanTest.cpp
+	StlExtensionsTest.cpp
 )
 
 target_link_libraries( GeoToolbox.Test PRIVATE ExtraWarnings MsvcNoDeprecation MsvcCppConformance LinkTimeOptimization GeoToolbox Catch2::Catch2WithMain )

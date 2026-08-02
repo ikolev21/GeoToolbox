@@ -1,0 +1,89 @@
+diff --git a/include/geos/geom/Envelope.h b/include/geos/geom/Envelope.h
+index 61e074b..c26b5d7 100644
+--- a/include/geos/geom/Envelope.h
++++ b/include/geos/geom/Envelope.h
+@@ -28,10 +28,28 @@
+ #include <memory>
+ #include <cassert>
+ #include <algorithm>
++#if defined(_MSC_VER) && !defined(__clang__)
++#include <emmintrin.h> // _mm_ucomige_sd (UCOMISD); see geos::geom::envelope_detail below
++#endif
+ 
+ namespace geos {
+ namespace geom { // geos::geom
+ 
++namespace envelope_detail {
++// Non-signaling ordered comparisons, equivalent to std::islessequal / std::isgreaterequal
++// (ordered, quiet on QNaN, false when unordered). MSVC (unlike Clang and GCC) does not lower
++// those std functions to the UCOMISD instruction; it calls the out-of-line UCRT helper _dpcomp()
++// instead, which makes Envelope intersection tests ~2-3x slower. _mm_ucomige_sd is UCOMISD and
++// gives identical semantics in a single instruction. Every other compiler keeps the std form.
++#if defined(_MSC_VER) && !defined(__clang__)
++inline bool quietLessEqual(double a, double b)    { return _mm_ucomige_sd(_mm_set_sd(b), _mm_set_sd(a)) != 0; }
++inline bool quietGreaterEqual(double a, double b) { return _mm_ucomige_sd(_mm_set_sd(a), _mm_set_sd(b)) != 0; }
++#else
++inline bool quietLessEqual(double a, double b)    { return std::islessequal(a, b); }
++inline bool quietGreaterEqual(double a, double b) { return std::isgreaterequal(a, b); }
++#endif
++} // namespace envelope_detail
++
+ class Envelope;
+ 
+ /// Output operator
+@@ -570,8 +588,8 @@ public:
+      */
+     bool intersects(const CoordinateXY& other) const
+     {
+-        return (std::islessequal(other.x, maxx) && std::isgreaterequal(other.x, minx) &&
+-                std::islessequal(other.y, maxy) && std::isgreaterequal(other.y,  miny));
++        return (envelope_detail::quietLessEqual(other.x, maxx) && envelope_detail::quietGreaterEqual(other.x, minx) &&
++                envelope_detail::quietLessEqual(other.y, maxy) && envelope_detail::quietGreaterEqual(other.y,  miny));
+     }
+ 
+     /** \brief
+@@ -583,10 +601,10 @@ public:
+      */
+     bool intersects(double x, double y) const
+     {
+-        return std::islessequal(x, maxx) &&
+-               std::isgreaterequal(x, minx) &&
+-               std::islessequal(y, maxy) &&
+-               std::isgreaterequal(y, miny);
++        return envelope_detail::quietLessEqual(x, maxx) &&
++               envelope_detail::quietGreaterEqual(x, minx) &&
++               envelope_detail::quietLessEqual(y, maxy) &&
++               envelope_detail::quietGreaterEqual(y, miny);
+     }
+ 
+     /** \brief
+@@ -597,10 +615,10 @@ public:
+      */
+     bool intersects(const Envelope* other) const
+     {
+-        return std::islessequal(other->minx, maxx) &&
+-               std::isgreaterequal(other->maxx, minx) &&
+-               std::islessequal(other->miny, maxy) &&
+-               std::isgreaterequal(other->maxy, miny);
++        return envelope_detail::quietLessEqual(other->minx, maxx) &&
++               envelope_detail::quietGreaterEqual(other->maxx, minx) &&
++               envelope_detail::quietLessEqual(other->miny, maxy) &&
++               envelope_detail::quietGreaterEqual(other->maxy, miny);
+     }
+ 
+     bool intersects(const Envelope& other) const
+@@ -633,10 +651,10 @@ public:
+      * @return `true` if `(x, y)` lies in the interior or on the boundary of this Envelope.
+      */
+     bool covers(double x, double y) const {
+-        return std::isgreaterequal(x,  minx) &&
+-               std::islessequal(x, maxx) &&
+-               std::isgreaterequal(y, miny) &&
+-               std::islessequal(y,  maxy);
++        return envelope_detail::quietGreaterEqual(x,  minx) &&
++               envelope_detail::quietLessEqual(x, maxx) &&
++               envelope_detail::quietGreaterEqual(y, miny) &&
++               envelope_detail::quietLessEqual(y,  maxy);
+     }
+ 
+     /** \brief

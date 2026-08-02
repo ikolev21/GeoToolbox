@@ -5,12 +5,12 @@
 
 #pragma once
 
-#include "SpatialIndexWrapper.hpp"
+#include "SpatialIndexAdapter.hpp"
 
 #ifndef ENABLE_NANOFLANN
 
 template <typename TSpatialKey>
-struct NanoflannStaticKdtree : SpatialIndexWrapper<TSpatialKey>
+struct NanoflannKdtreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
@@ -43,7 +43,7 @@ struct NanoflannStaticKdtree : SpatialIndexWrapper<TSpatialKey>
 #endif
 
 template <typename TSpatialKey>
-struct NanoflannStaticKdtreeBase : SpatialIndexWrapper<TSpatialKey>
+struct NanoflannKdtreeAdapterBase : SpatialIndexAdapter<TSpatialKey>
 {
 	[[nodiscard]] std::string_view Name() const override
 	{
@@ -95,7 +95,7 @@ struct NanoflannStaticKdtreeBase : SpatialIndexWrapper<TSpatialKey>
 };
 
 template <typename TVector>
-struct NanoflannStaticKdtree final : NanoflannStaticKdtreeBase<TVector>
+struct NanoflannKdtreeAdapter final : NanoflannKdtreeAdapterBase<TVector>
 {
 	using Point = TVector;
 
@@ -149,7 +149,7 @@ struct NanoflannStaticKdtree final : NanoflannStaticKdtreeBase<TVector>
 	{
 		auto& index = *static_cast<IndexType const*>(indexPtr.get());
 
-		return NanoflannStaticKdtreeBase<TVector>::GetTreeStats(*index.second);
+		return NanoflannKdtreeAdapterBase<TVector>::GetTreeStats(*index.second);
 	}
 
 	static void Convert(BoxType const& queryBox, typename TreeType::BoundingBox& treeBox)
@@ -186,7 +186,7 @@ struct NanoflannStaticKdtree final : NanoflannStaticKdtreeBase<TVector>
 	{
 		auto result = std::make_shared<IndexType>();
 		result->first.dataset = &dataset;
-		auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(GeoToolbox::MaxElementsPerNode, nanoflann::KDTreeSingleIndexAdaptorFlags::None, NanoflannStaticKdtreeBase<TVector>::MaxThreadCount);
+		auto const params = nanoflann::KDTreeSingleIndexAdaptorParams(GeoToolbox::MaxElementsPerNode, nanoflann::KDTreeSingleIndexAdaptorFlags::None, NanoflannKdtreeAdapterBase<TVector>::MaxThreadCount);
 		result->second = std::make_unique<TreeType>(int(Dimensions), result->first, params);
 		return result;
 	}
@@ -214,7 +214,7 @@ struct NanoflannStaticKdtree final : NanoflannStaticKdtreeBase<TVector>
 	};
 
 
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
 	{
 		auto& index = *static_cast<IndexType const*>(indexPtr.get());
 
@@ -251,13 +251,11 @@ struct NanoflannStaticKdtree final : NanoflannStaticKdtreeBase<TVector>
 
 			auto const dimensionIndex = node->node_type.sub.divfeat;
 			typename TreeType::Node* nextNode = nullptr;
-			GeoToolbox::AddQueryStats_ScalarComparisonsCount();
 			if (node->child1 != nullptr && queryBox.Min()[dimensionIndex] <= node->node_type.sub.divlow)
 			{
 				nextNode = node->child1;
 			}
 
-			GeoToolbox::AddQueryStats_ScalarComparisonsCount();
 			if (node->child2 != nullptr && queryBox.Max()[dimensionIndex] >= node->node_type.sub.divhigh)
 			{
 				if (nextNode != nullptr)
@@ -288,11 +286,11 @@ struct NanoflannStaticKdtree final : NanoflannStaticKdtreeBase<TVector>
 };
 
 template <typename TVector>
-struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> final : NanoflannStaticKdtreeBase<GeoToolbox::Box<TVector>>
+struct NanoflannKdtreeAdapter<GeoToolbox::Box<TVector>> final : NanoflannKdtreeAdapterBase<GeoToolbox::Box<TVector>>
 {
 	static constexpr auto Dimensions = GeoToolbox::VectorTraits<TVector>::Dimensions;
 
-	using BaseType = NanoflannStaticKdtreeBase<GeoToolbox::Box<TVector>>;
+	using BaseType = NanoflannKdtreeAdapterBase<GeoToolbox::Box<TVector>>;
 
 	using ScalarType = typename GeoToolbox::VectorTraits<TVector>::ScalarType;
 
@@ -344,7 +342,7 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> final : NanoflannStaticKd
 		return BaseType::GetTreeStats(*index.second);
 	}
 
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
 	{
 		auto& index = *static_cast<IndexType const*>(indexPtr.get());
 
@@ -376,13 +374,13 @@ struct NanoflannStaticKdtree<GeoToolbox::Box<TVector>> final : NanoflannStaticKd
 			auto const dimensionIndex = node->node_type.sub.divfeat;
 			typename TreeType::Node* nextNode = nullptr;
 			if (node->child1 != nullptr
-				&& (GeoToolbox::AddQueryStats_ScalarComparisonsCount(), dimensionIndex < Dimensions || queryBox.Min()[dimensionIndex - Dimensions] <= node->node_type.sub.divlow))
+				&& (dimensionIndex < Dimensions || queryBox.Min()[dimensionIndex - Dimensions] <= node->node_type.sub.divlow))
 			{
 				nextNode = node->child1;
 			}
 
 			if (node->child2 != nullptr
-				&& (GeoToolbox::AddQueryStats_ScalarComparisonsCount(), dimensionIndex >= Dimensions || queryBox.Max()[dimensionIndex] >= node->node_type.sub.divhigh))
+				&& (dimensionIndex >= Dimensions || queryBox.Max()[dimensionIndex] >= node->node_type.sub.divhigh))
 			{
 				if (nextNode != nullptr)
 				{

@@ -261,18 +261,6 @@ namespace GeoToolbox
 			index_[Dimensions - 1] = -1;
 		}
 
-		[[nodiscard]] Iterable<QueryIterator> MakeRange() const
-		{
-			return { *this, QueryIterator{} };
-		}
-
-		[[nodiscard]] QueryIterator SetSize(ScalarType newSize) const
-		{
-			auto result = *this;
-			result.size_ = newSize;
-			return result;
-		}
-
 		reference operator* () const
 		{
 			return box_;
@@ -340,14 +328,13 @@ namespace GeoToolbox
 	};
 
 
+// Can also be enabled with the GeoToolbox_ENABLE_QUERYSTATS CMake option
 //#define ENABLE_QUERYSTATS
 
 	extern struct QueryStats
 	{
 		using CounterType = int64_t;
 
-		CounterType ScalarComparisonsCount = 0;
-		CounterType BoxOverlapsCount = 0;
 		CounterType ObjectTestsCount = 0;
 		int VisitedNodesCount = 0;
 		int QueryCount = 0;
@@ -358,13 +345,11 @@ namespace GeoToolbox
 
 		[[nodiscard]] auto AsTuple() const noexcept
 		{
-			return std::make_tuple(ScalarComparisonsCount, BoxOverlapsCount, ObjectTestsCount, VisitedNodesCount);
+			return std::make_tuple(ObjectTestsCount, VisitedNodesCount);
 		}
 
 		QueryStats& operator+=(QueryStats const& other)
 		{
-			ScalarComparisonsCount += other.ScalarComparisonsCount;
-			BoxOverlapsCount += other.BoxOverlapsCount;
 			ObjectTestsCount += other.ObjectTestsCount;
 			VisitedNodesCount += other.VisitedNodesCount;
 			++QueryCount;
@@ -391,7 +376,7 @@ namespace GeoToolbox
 				count = QueryCount;
 			}
 
-			stream << "Comp:" << ScalarComparisonsCount / count << " BoxComp:" << BoxOverlapsCount / count << " ObjTest:" << ObjectTestsCount / count << " Nodes:" << VisitedNodesCount / count;
+			stream << "ObjTest:" << ObjectTestsCount / count << " Nodes:" << VisitedNodesCount / count;
 			return stream.str();
 		}
 	} TheQueryStats;
@@ -404,7 +389,7 @@ namespace GeoToolbox
 		}
 		else
 		{
-			stream << stats.ScalarComparisonsCount << ' ' << stats.BoxOverlapsCount << ' ' << stats.ObjectTestsCount << ' ' << stats.VisitedNodesCount;
+			stream << stats.ObjectTestsCount << ' ' << stats.VisitedNodesCount;
 		}
 
 		return stream;
@@ -412,13 +397,11 @@ namespace GeoToolbox
 
 	inline std::istream& operator>>(std::istream& stream, QueryStats& stats)
 	{
-		typename QueryStats::CounterType scalar;
-		stream >> scalar;
-		if (scalar > 0)
+		typename QueryStats::CounterType objectTests;
+		stream >> objectTests;
+		if (objectTests > 0)
 		{
-			stats.ScalarComparisonsCount = scalar;
-			stream >> stats.BoxOverlapsCount;
-			stream >> stats.ObjectTestsCount;
+			stats.ObjectTestsCount = objectTests;
 			stream >> stats.VisitedNodesCount;
 		}
 
@@ -429,26 +412,14 @@ namespace GeoToolbox
 
 	inline bool QueryStats::IsEmpty() const noexcept
 	{
-		return ScalarComparisonsCount == 0 && BoxOverlapsCount == 0 && ObjectTestsCount == 0 && VisitedNodesCount == 0;
+		return ObjectTestsCount == 0 && VisitedNodesCount == 0;
 	}
 
 	inline void QueryStats::Clear() noexcept
 	{
-		ScalarComparisonsCount = 0;
-		BoxOverlapsCount = 0;
 		ObjectTestsCount = 0;
 		VisitedNodesCount = 0;
 		QueryCount = 0;
-	}
-
-	inline void AddQueryStats_ScalarComparisonsCount()
-	{
-		++TheQueryStats.ScalarComparisonsCount;
-	}
-
-	inline void AddQueryStats_BoxOverlapsCount()
-	{
-		++TheQueryStats.BoxOverlapsCount;
 	}
 
 	inline void AddQueryStats_ObjectTestsCount()
@@ -471,14 +442,6 @@ namespace GeoToolbox
 	{
 	}
 
-	inline void AddQueryStats_ScalarComparisonsCount()
-	{
-	}
-
-	inline void AddQueryStats_BoxOverlapsCount()
-	{
-	}
-
 	inline void AddQueryStats_ObjectTestsCount()
 	{
 	}
@@ -498,6 +461,5 @@ struct std::hash<GeoToolbox::Feature<TSpatialKey>>
 	}
 };
 
-extern "C" void GeoToolbox_AddQueryStats_BoxOverlapsCount();
 extern "C" void GeoToolbox_AddQueryStats_ObjectTestsCount();
 extern "C" void GeoToolbox_AddQueryStats_VisitedNodesCount();

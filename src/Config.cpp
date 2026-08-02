@@ -120,11 +120,6 @@ namespace GeoToolbox
 	QueryStats TheQueryStats{};
 }
 
-void GeoToolbox_AddQueryStats_BoxOverlapsCount()
-{
-	GeoToolbox::AddQueryStats_BoxOverlapsCount();
-}
-
 void GeoToolbox_AddQueryStats_ObjectTestsCount()
 {
 	GeoToolbox::AddQueryStats_ObjectTestsCount();

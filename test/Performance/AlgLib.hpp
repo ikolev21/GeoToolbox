@@ -5,12 +5,12 @@
 
 #pragma once
 
-#include "SpatialIndexWrapper.hpp"
+#include "SpatialIndexAdapter.hpp"
 
 #ifndef ENABLE_ALGLIB
 
 template <typename TSpatialKey>
-struct AlglibKdtree : SpatialIndexWrapper<TSpatialKey>
+struct AlglibKdtreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
@@ -23,7 +23,7 @@ struct AlglibKdtree : SpatialIndexWrapper<TSpatialKey>
 
 // TODO: Convert from float to double for float keys
 template <typename TSpatialKey, bool IsSupported = GeoToolbox::SpatialKeyIsPoint<TSpatialKey> && std::is_same_v<typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::ScalarType, double>>
-struct AlglibKdtree : SpatialIndexWrapper<TSpatialKey>
+struct AlglibKdtreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 	static constexpr auto Dimensions = GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions;
 
@@ -76,7 +76,7 @@ struct AlglibKdtree : SpatialIndexWrapper<TSpatialKey>
 		return result;
 	}
 
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& queryBox) const override
 	{
 		if (indexPtr == nullptr)
 		{
@@ -127,7 +127,7 @@ struct AlglibKdtree : SpatialIndexWrapper<TSpatialKey>
 
 // Turn off for box keys
 template <typename TSpatialKey>
-struct AlglibKdtree<TSpatialKey, false> : SpatialIndexWrapper<TSpatialKey>
+struct AlglibKdtreeAdapter<TSpatialKey, false> : SpatialIndexAdapter<TSpatialKey>
 {
 };
 

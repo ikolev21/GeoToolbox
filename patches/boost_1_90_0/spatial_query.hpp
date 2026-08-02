@@ -62,7 +62,6 @@ struct spatial_query
             for (auto const& p : rtree::elements(n))
             {
                 // if node meets predicates (0 is dummy value)
-                GeoToolbox::AddQueryStats_BoxOverlapsCount();
                 if (id::predicates_check<id::bounds_tag>(m_pred, 0, p.first, m_strategy))
                 {
                     apply(p.second, reverse_level - 1);

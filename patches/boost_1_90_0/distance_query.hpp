@@ -237,7 +237,6 @@ private:
                     node_distance_type node_distance; // for distance predicate
 
                     // if current node meets predicates (0 is dummy value)
-                    GeoToolbox::AddQueryStats_BoxOverlapsCount();
                     if (id::predicates_check<id::bounds_tag>(m_pred, 0, p.first, m_strategy)
                         // and if distance is ok
                         && calculate_node_distance::apply(predicate(), p.first, m_strategy, node_distance)

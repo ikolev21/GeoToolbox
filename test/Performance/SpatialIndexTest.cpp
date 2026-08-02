@@ -14,9 +14,10 @@
 #include "AlgLib.hpp"
 #include "Boost.hpp"
 #include "Geos.hpp"
+#include "KdBoxTreeAdapter.hpp"
 #include "NanoflannAdapter.hpp"
 // ReSharper disable once CppUnusedIncludeDirective
-#include "SpatialIndexWrapper.hpp"
+#include "SpatialIndexAdapter.hpp"
 #include "TidwallRtree.hpp"
 #ifdef ENABLE_PRIVATE
 #include "Private.hpp"
@@ -48,20 +49,21 @@ using SpatialKeysToTest = TypeList<
 template <typename TSpatialKey, template <class> class... TIndex>
 auto MakeIndicesToTest()
 {
-	return array{ static_cast<unique_ptr<SpatialIndexWrapper<TSpatialKey>>>(make_unique<TIndex<TSpatialKey>>())... };
+	return array{ static_cast<unique_ptr<SpatialIndexAdapter<TSpatialKey>>>(make_unique<TIndex<TSpatialKey>>())... };
 }
 
 template <typename TSpatialKey>
 auto const IndicesToTest = MakeIndicesToTest<TSpatialKey
-	, StdVector // Too slow, enable only to verify the results of the other participants
-	, NanoflannStaticKdtree
-	, GeosTemplateStrTree
-	//, GeosKdTree	// Always slower than TemplateStrTree
-	//, GeosQuadTree	// Always slower than TemplateStrTree
-	//, GeosVertexSequencePackedRtree	// In rare cases is just a bit faster than TemplateStrTree, (much) slower in 
-	, TidwallRtree
-	, BoostRtree
-	, AlglibKdtree	// works with double only and needs conversion from float, not implemented yet. Query times are consistently worse than all other indices
+	, StdVectorAdapter // Too slow, enable only to verify the results of the other participants
+	, NanoflannKdtreeAdapter
+	, KdBoxTreeAdapter
+	, GeosTemplateStrTreeAdapter
+	//, GeosKdTreeAdapter	// Always slower than TemplateStrTree
+	//, GeosQuadTreeAdapter	// Always slower than TemplateStrTree
+	//, GeosVertexSequencePackedRtreeAdapter	// In rare cases is just a bit faster than TemplateStrTree, (much) slower in 
+	, TidwallRtreeAdapter
+	, BoostRtreeAdapter
+	//, AlglibKdtreeAdapter	// works with double only and needs conversion from float, not implemented yet. Query times are consistently worse than all other indices
 #ifdef ENABLE_PRIVATE
 	, PrivateIndex
 #endif
@@ -695,7 +697,11 @@ struct TestContext : TestContextBase
 		cout << dataset.GetName() << '\t' << dataset.GetSize() << '\n';
 	}
 
-	static constexpr auto Tolerance = 0.1;
+	// Cross-index results are compared with a hybrid absolute/relative tolerance. The nearest-query metric (see SpatialIndexAdapter::QueryNearest) sums QueryNearestCount squared distances
+	// computed in ScalarType, so on large-coordinate datasets the per-term rounding accumulates to a benign difference proportional to the sum's magnitude and the scalar precision. The
+	// relative term (2 * QueryNearestCount epsilons, bounding the terms plus their accumulation) absorbs that; the absolute term keeps near-zero sums sane.
+	static constexpr auto AbsoluteTolerance = 0.01;
+	static constexpr auto RelativeTolerance = 2 * QueryNearestCount * double(std::numeric_limits<ScalarType>::epsilon());
 
 	bool VerifyQueryResults(vector<double>&& results, string_view spatialIndexName, Timings::ActionStats* stats = nullptr)
 	{
@@ -707,10 +713,11 @@ struct TestContext : TestContextBase
 		{
 			for (auto i = 0; i < Size(results); ++i)
 			{
-				if (abs(results[i] - queryResults[i]) > Tolerance)
+				auto const tolerance = std::max(AbsoluteTolerance, RelativeTolerance * std::max(abs(results[i]), abs(queryResults[i])));
+				if (abs(results[i] - queryResults[i]) > tolerance)
 				{
 					cout << SetColorRed << std::fixed << "\t\t\tFAILED query index " << i << " for spatial index " << spatialIndexName
-						<< ", expected result " << queryResults[i] << ", got " << results[i] << ResetColor << '\n';
+						<< ", expected result " << queryResults[i] << ", got " << results[i] << " (tolerance " << tolerance << ')' << ResetColor << '\n';
 					if (stats != nullptr)
 					{
 						stats->failed = true;
@@ -740,8 +747,6 @@ struct TestContext : TestContextBase
 			PerfRecord::Stats stats{ int64_t(action.second.bestTime), action.second.memoryDelta/* == std::numeric_limits<int64_t>::max() ? 0 : action.second.memoryDelta*/, action.second.failed };
 			if (auto const queryStats = static_cast<QueryStats*>(action.second.extra.get()))
 			{
-				stats.queryScalarComparisons = queryStats->ScalarComparisonsCount;
-				stats.queryBoxOverlaps = queryStats->BoxOverlapsCount;
 				stats.queryVisitedNodes = queryStats->VisitedNodesCount;
 				stats.queryObjectTests = queryStats->ObjectTestsCount;
 			}
@@ -783,7 +788,7 @@ struct TestScenario
 	[[nodiscard]] virtual std::string_view Name() const = 0;
 
 	// Return -1 if the scenario is not supported, or the number of failures is supported
-	[[nodiscard]] virtual int Run(TestContext<TSpatialKey>&, SpatialIndexWrapper<TSpatialKey> const&) const = 0;
+	[[nodiscard]] virtual int Run(TestContext<TSpatialKey>&, SpatialIndexAdapter<TSpatialKey> const&) const = 0;
 };
 
 
@@ -795,7 +800,7 @@ struct Test_Load_Query_Destroy : TestScenario<TSpatialKey>
 
 	[[nodiscard]] virtual char const* GetOpName() const = 0;
 
-	[[nodiscard]] int Run(TestContext<TSpatialKey>& test, SpatialIndexWrapper<TSpatialKey> const& wrapper) const override
+	[[nodiscard]] int Run(TestContext<TSpatialKey>& test, SpatialIndexAdapter<TSpatialKey> const& wrapper) const override
 	{
 		if (RunQuery(wrapper, wrapper.Load(Dataset<TSpatialKey>{}), BoxType{ VectorType{0} }) < 0)
 		{
@@ -848,7 +853,7 @@ struct Test_Load_Query_Destroy : TestScenario<TSpatialKey>
 					for (auto const& query : test.queries)
 					{
 						auto const result = RunQuery(wrapper, spatialIndex, query);
-						if (queryIndex > Size(queryResults))
+						if (queryIndex >= Size(queryResults))
 						{
 							queryResults.push_back(result);
 						}
@@ -877,7 +882,7 @@ struct Test_Load_Query_Destroy : TestScenario<TSpatialKey>
 		return test.VerifyQueryResults(std::move(queryResults), wrapper.Name(), statsQuery) ? 0 : 1;
 	}
 
-	[[nodiscard]] virtual double RunQuery(SpatialIndexWrapper<TSpatialKey> const& wrapper, std::shared_ptr<void> const& spatialIndex, BoxType const& query) const = 0;
+	[[nodiscard]] virtual double RunQuery(SpatialIndexAdapter<TSpatialKey> const& wrapper, std::shared_ptr<void> const& spatialIndex, BoxType const& query) const = 0;
 };
 
 template <typename TSpatialKey>
@@ -895,9 +900,9 @@ struct Test_Load_QueryBox_Destroy final : Test_Load_Query_Destroy<TSpatialKey>
 		return OpNameQueryBox;
 	}
 
-	[[nodiscard]] double RunQuery(SpatialIndexWrapper<TSpatialKey> const& wrapper, std::shared_ptr<void> const& spatialIndex, BoxType const& query) const override
+	[[nodiscard]] double RunQuery(SpatialIndexAdapter<TSpatialKey> const& wrapper, std::shared_ptr<void> const& spatialIndex, BoxType const& query) const override
 	{
-		return wrapper.QueryBox(spatialIndex, query);
+		return wrapper.QueryRange(spatialIndex, query);
 	}
 };
 
@@ -916,7 +921,7 @@ struct Test_Load_QueryNearest_Destroy final : Test_Load_Query_Destroy<TSpatialKe
 		return OpNameQueryNearest;
 	}
 
-	[[nodiscard]] double RunQuery(SpatialIndexWrapper<TSpatialKey> const& wrapper, std::shared_ptr<void> const& spatialIndex, BoxType const& query) const override
+	[[nodiscard]] double RunQuery(SpatialIndexAdapter<TSpatialKey> const& wrapper, std::shared_ptr<void> const& spatialIndex, BoxType const& query) const override
 	{
 		return wrapper.QueryNearest(spatialIndex, query.Center(), QueryNearestCount);
 	}
@@ -930,7 +935,7 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 		return "Insert-Erase-Query";
 	}
 
-	[[nodiscard]] int Run(TestContext<TSpatialKey>& test, SpatialIndexWrapper<TSpatialKey> const& wrapper) const override
+	[[nodiscard]] int Run(TestContext<TSpatialKey>& test, SpatialIndexAdapter<TSpatialKey> const& wrapper) const override
 	{
 		if (!wrapper.IsDynamic())
 		{
@@ -967,7 +972,7 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 		}
 	}
 
-	static int Run_(TestContext<TSpatialKey>& test, SpatialIndexWrapper<TSpatialKey> const& wrapper)
+	static int Run_(TestContext<TSpatialKey>& test, SpatialIndexAdapter<TSpatialKey> const& wrapper)
 	{
 		Timings::ActionStats* statsQueryBox = nullptr;
 
@@ -1038,8 +1043,8 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 					auto queryIndex = 0;
 					for (auto const& query : test.queries)
 					{
-						auto const result = wrapper.QueryBox(spatialIndex, query);
-						if (queryIndex > Size(queryResults))
+						auto const result = wrapper.QueryRange(spatialIndex, query);
+						if (queryIndex >= Size(queryResults))
 						{
 							queryResults.push_back(result);
 						}
@@ -1062,7 +1067,7 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 };
 
 template <typename TSpatialKey>
-int RunSpatialIndex(TestContext<TSpatialKey>& testContext, TestScenario<TSpatialKey> const& scenario, SpatialIndexWrapper<TSpatialKey> const& wrapper)
+int RunSpatialIndex(TestContext<TSpatialKey>& testContext, TestScenario<TSpatialKey> const& scenario, SpatialIndexAdapter<TSpatialKey> const& wrapper)
 {
 	if (wrapper.Name().empty() || !IsSelected("Index", wrapper.Name(), 2))
 	{
@@ -1213,29 +1218,6 @@ int CompareSpatialIndices(PerfRecord& perfRecord)
 	return totalFailures;
 }
 
-
-TEST_CASE("adhoc", "[.]")
-{
-	vector<Vector3f> verts;
-
-	ifstream inputFile(R"(C:\Users\ikolev\Documents\maya\projects\default\scenes\hair.obj)");
-	string line;
-	while (std::getline(inputFile, line))
-	{
-		if (StartsWith(line, "v "))
-		{
-			stringstream ls{ line.substr(2) };
-			float x = 0, y = 0, z = 0;
-			ls >> x >> y >> z;
-			if (ls)
-			{
-				verts.push_back({ x, y, z });
-			}
-		}
-	}
-
-	//auto const result = thinks::ReadObj(ifs, add_position, add_face);
-}
 
 TEST_CASE("CompareSpatialIndices", "[.Performance]")
 {

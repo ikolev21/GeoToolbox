@@ -8,13 +8,13 @@
 #ifndef ENABLE_BOOST
 
 template <typename TSpatialKey>
-struct BoostRtree : SpatialIndexWrapper<TSpatialKey>
+struct BoostRtreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 };
 
 #else
 
-#include "SpatialIndexWrapper.hpp"
+#include "SpatialIndexAdapter.hpp"
 #include "TestTools.hpp"
 #include "GeoToolbox/Iterators.hpp"
 #include "GeoToolbox/SpatialTools.hpp"
@@ -55,7 +55,7 @@ struct Bgi::indexable<GeoToolbox::Feature<TSpatialKey> const*>
 
 
 template <typename TSpatialKey>
-struct BoostRtree : SpatialIndexWrapper<TSpatialKey>
+struct BoostRtreeAdapter : SpatialIndexAdapter<TSpatialKey>
 {
 	using VectorType = typename GeoToolbox::SpatialKeyTraits<TSpatialKey>::VectorType;
 
@@ -100,7 +100,7 @@ struct BoostRtree : SpatialIndexWrapper<TSpatialKey>
 		return index.remove(feature) == 1;
 	}
 
-	[[nodiscard]] int QueryBox(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override;
+	[[nodiscard]] int QueryRange(std::shared_ptr<void> const& indexPtr, BoxType const& box) const override;
 
 	[[nodiscard]] double QueryNearest(std::shared_ptr<void> const& indexPtr, VectorType const& location, int nearestCount) const override;
 };
