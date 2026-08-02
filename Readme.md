@@ -97,7 +97,7 @@ Some conclusions that can be drawn:
 * **GEOS** STR-tree is strong at what it was designed for, range queries over 2D boxes, matching or slightly beating KdBoxTree on large low-clustering 2D box sets around 10<sup>5</sup> elements. It is limited to 2D `double` keys, does no nearest queries, and treats points as degenerate boxes (so it is slower on point keys).
 * A rather important detail about the GEOS indices is that they have a performance problem on Windows with the MSVC compiler, queries run 2-3 times slower than with Clang.  
 This is caused by a missed optimization in MSVC, [reported here](https://developercommunity.visualstudio.com/t/MSVC-O2-lowers-std::islessequal-to-_dpc/11129102).  
-The effect is recorded in the results file `test/Performance/testResults/CompareSpatialIndices_GEOS.tsv`.  
+The effect is recorded in the [results file](https://github.com/ikolev21/ikolev21.github.io/blob/main/CompareSpatialIndices_GEOS.tsv).  
 Included is a patch `patches/geos-3.14.1/Envelope.h.diff` that works around the problem, bringing MSVC on par with Clang. The results uploaded at the link above have the patch applied.  
 Hopefully the official distribution of PostgreSQL+PostGIS on Windows is **not** compiled with MSVC.
 * Boost R-tree lags behind in query performance, but is the most versatile (as the full row of +'s in the table above shows) and, together with tidwall, the only tree index here that supports dynamic insert/erase.
