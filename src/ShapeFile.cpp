@@ -139,19 +139,16 @@ namespace GeoToolbox
 			return false;
 		}
 
-		std::array<double, 4> x{}, y{};
+		// A ring repeats its first vertex at the end, as the shapefile specification requires; readers that accept an open one are being lenient
+		std::array<double, 5> x{}, y{};
 		for (auto const& box : boxes)
 		{
 			// Shapefile expects polygons to have clockwise orientation
-			x[0] = box.Min()[0];
-			y[0] = box.Min()[1];
-			x[1] = box.Min()[0];
-			y[1] = box.Max()[1];
-			x[2] = box.Max()[0];
-			y[2] = box.Max()[1];
-			x[3] = box.Max()[0];
-			y[3] = box.Min()[1];
-			ShapeObjectPtr const obj{ SHPCreateSimpleObject(SHPT_POLYGON, 4, x.data(), y.data(), nullptr) };
+			x[0] = x[1] = x[4] = box.Min()[0];
+			x[2] = x[3] = box.Max()[0];
+			y[0] = y[3] = y[4] = box.Min()[1];
+			y[1] = y[2] = box.Max()[1];
+			ShapeObjectPtr const obj{ SHPCreateSimpleObject(SHPT_POLYGON, int(x.size()), x.data(), y.data(), nullptr) };
 			if (obj == nullptr)
 			{
 				return false;

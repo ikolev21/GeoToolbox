@@ -171,8 +171,7 @@ namespace GeoToolbox
 		Box<typename SpatialKeyTraits<TSpatialKey>::VectorType> const& boundingBox,
 		Interval<typename SpatialKeyTraits<TSpatialKey>::ScalarType> heightMinMax,
 		typename SpatialKeyTraits<TSpatialKey>::ScalarType skewPower = 0,
-		typename SpatialKeyTraits<TSpatialKey>::ScalarType averageBoxAspect = 1,
-		int islandsCount = 1)
+		typename SpatialKeyTraits<TSpatialKey>::ScalarType averageBoxAspect = 1)
 	{
 		using ScalarType = typename SpatialKeyTraits<TSpatialKey>::ScalarType;
 		using VectorType = typename SpatialKeyTraits<TSpatialKey>::VectorType;
@@ -183,11 +182,9 @@ namespace GeoToolbox
 		std::uniform_real_distribution positionDistribution{ ScalarType{ 0 }, ScalarType{ 1 } };
 		std::uniform_real_distribution heightDistribution{ heightMinMax.min, heightMinMax.max };
 		std::uniform_real_distribution aspectDistribution{ ScalarType{ 1 }, 2 * averageBoxAspect - 1 };
-		auto islandsIndex = 0;
 
 		std::vector<Feature<TSpatialKey>> data{ size_t(datasetSize) };
-		islandsCount = std::max(islandsCount, 1);
-		auto const islandSizes = boundingBox.Sizes() / ScalarType(islandsCount);
+		auto const boundingBoxSizes = boundingBox.Sizes();
 		for (auto i = 0; i < datasetSize; ++i)
 		{
 			auto randomArray = MakeRandomArray([&]() { return positionDistribution(randomGenerator); }, std::make_index_sequence<VectorTraits<VectorType>::Dimensions>());
@@ -197,12 +194,7 @@ namespace GeoToolbox
 				randomPoint[0] = ScalarType(pow(double(randomPoint[0]), double(skewPower)));
 			}
 
-			auto center = boundingBox.Min() + ComponentMultiply(islandSizes, randomPoint);
-			if (islandsCount > 1)
-			{
-				center += ScalarType(islandsIndex) * islandSizes;
-				islandsIndex = (islandsIndex + 1) % islandsCount;
-			}
+			auto center = boundingBox.Min() + ComponentMultiply(boundingBoxSizes, randomPoint);
 
 			if constexpr (SpatialKeyIsPoint<TSpatialKey>)
 			{

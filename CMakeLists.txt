@@ -201,6 +201,7 @@ configure_file( Msvc.props.template Msvc.props )
 set_property( TARGET GeoToolbox PROPERTY VS_USER_PROPS ${CMAKE_CURRENT_BINARY_DIR}/Msvc.props )
 
 
+option( DATASET_CoralGables_Lidar "1.06M LiDAR points, a 1000ft square of Coral Gables FL, USGS 3DEP, public domain, https://www.usgs.gov/3d-elevation-program" OFF )
 option( DATASET_Maricopa_Parcel_Points "1.7M parcel points, https://hub.arcgis.com/datasets/dbf139379db946e1b10a2f15672c142d/about" OFF )
 option( DATASET_Maricopa_Parcels "1.7M parcel polygons, https://hub.arcgis.com/datasets/dbf139379db946e1b10a2f15672c142d/about" OFF )
 option( DATASET_Maricopa_Streets "290K lines, https://hub.arcgis.com/datasets/dbf139379db946e1b10a2f15672c142d/about" OFF )
@@ -208,6 +209,8 @@ option( DATASET_Maricopa_Streets "290K lines, https://hub.arcgis.com/datasets/db
 # option( DATASET_Miami_Dade_Property_Boundary "500K parcels, https://hub.arcgis.com/maps/ed0468f5e579464b84727a4ab614fd40" OFF )
 # option( DATASET_Miami_Dade_Property_Point "700K parcel points, https://hub.arcgis.com/maps/bf92e51f90a8426cae904ebc15018067" OFF )
 # option( DATASET_Miami_Dade_Street "100K lines, https://hub.arcgis.com/datasets/a7e9449c8ec04bd39fb952e66e341442_0" OFF )
+option( DATASET_Texas_NewMex_Blocks "1.08M census blocks of Texas and New Mexico, as their bounding boxes, https://www2.census.gov/geo/tiger/TIGER2010/TABBLOCK/2010/" OFF )
+option( DATASET_Utah_Buildings "1.12M building footprints of Utah, FEMA/ORNL USA Structures, CC0, https://doi.org/10.6084/m9.figshare.24428851" OFF )
 option( DATASET_armadillo "49K points, 99K faces, https://github.com/alecjacobson/common-3d-test-models" OFF )
 option( DATASET_xyzrgb_dragon "124K points, 249K faces, https://github.com/alecjacobson/common-3d-test-models" OFF )
 
@@ -229,9 +232,12 @@ function( AddDataset _name _hash _file )
 	endif()
 endfunction()
 
+AddDataset( CoralGables_Lidar d60bb1d988a0e334cdeb390992db117e59266cc58a274a80f9f20171a94b6615 CoralGables_Lidar.obj )
 AddDataset( Maricopa_Parcel_Points d0a47ec800d1d404a91edefc26bcc2e117c364aac3b7b3d28142649ae7e13ffe Maricopa_Parcel_Points.shp )
 AddDataset( Maricopa_Parcels dfbffe33a9e188e4510e6988fd7d90a39577370d6d1d912c8e69fe3a669b5749 Maricopa_Parcels.shp )
 AddDataset( Maricopa_Streets 05e199d796e0ad527fbff09d918bfb1772c224edfaef8789fb3a466cdd448918 Maricopa_Streets.shp )
+AddDataset( Texas_NewMex_Blocks a7ff4275238f5d68c0a7d6213e6d10ccffeff1e4bf5558eecb1ad0a2a9cf4158 Texas_NewMex_Blocks.shp )
+AddDataset( Utah_Buildings 5755863334346afaccf6092f038f804b392ea0cc1f84fb1b3579e92499c5692d Utah_Buildings.shp )
 AddDataset( armadillo 70d03446bee3e2679fcf7038152aeabcf059e92e781108cb68d1b28c20749fa7 armadillo.obj )
 AddDataset( xyzrgb_dragon 2276eae5e9c9a81a47763a00bc484281abafaeedd833ba031a849af3118ce446 xyzrgb_dragon.obj )
 

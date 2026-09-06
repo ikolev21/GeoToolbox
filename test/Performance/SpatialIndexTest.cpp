@@ -1,4 +1,4 @@
-// Copyright 2024-2026 Ivan Kolev
+﻿// Copyright 2024-2026 Ivan Kolev
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -34,7 +34,7 @@
 using namespace GeoToolbox;
 using namespace std;
 
-constexpr auto OpNameQueryBox = "Query Range";
+constexpr auto OpNameQueryRange = "Query Range";
 constexpr auto OpNameQueryNearest = "Query Nearest";
 
 using SpatialKeysToTest = TypeList<
@@ -92,9 +92,9 @@ namespace
 
 	string const DatasetName_Uniform = "Synthetic_Uniform";
 	string const DatasetName_Skewed = "Synthetic_Skewed";
-	string const DatasetName_Aspect = "Synthetic_Aspect";
-	string const DatasetName_Islands = "Synthetic_Islands";
+	string const DatasetName_Clusters = "Synthetic_Clusters";
 	string const DatasetName_Polygon = "Synthetic_Polygon";
+	string const DatasetName_Parcels = "Synthetic_Parcels";
 
 	template <typename TSpatialKey>
 	struct DatasetMaker
@@ -127,30 +127,47 @@ namespace
 			return Dataset{ std::move(name), data };
 		}
 
-		[[nodiscard]] Dataset<TSpatialKey> MakeIslands(int datasetSize, ScalarType islandRadiusFactor = 0)
+		// Cluster populations follow Zipf's law, which is what spreads the clustering over several scales rather than putting it all at one. A cluster's radius follows from the share of the
+		// extent's volume it covers rather than from a fraction of the extent, so that the density inside it, and with it the number of features a query returns, is the same in any number of
+		// dimensions
+		[[nodiscard]] Dataset<TSpatialKey> MakeClusters(int datasetSize, int clusterCount, ScalarType largestClusterVolumeShare)
 		{
 			ASSERT(datasetSize > 0);
-			islandRadiusFactor = islandRadiusFactor > 0 ? min(ScalarType(0.1), islandRadiusFactor) : ScalarType(0.01);
-			auto const islandRadius = extent * islandRadiusFactor;
+			ASSERT(clusterCount > 0);
+			ASSERT(largestClusterVolumeShare > 0 && largestClusterVolumeShare <= 1);
 
-			constexpr auto zero = ScalarType(0);
-			uniform_int_distribution distributionIslandIndex{ 0, 2 };
-			array positions = { -islandRadius, -islandRadius / 2, zero, islandRadius / 2, islandRadius };
-			array weights = { zero, ScalarType(0.1), ScalarType(1), ScalarType(0.1), zero };
-			piecewise_linear_distribution<ScalarType> distributionOffset{ positions.begin(), positions.end(), weights.begin() };
+			constexpr auto dimensions = SpatialKeyTraits<TSpatialKey>::Dimensions;
+
+			auto const count = size_t(clusterCount);
+			uniform_real_distribution<ScalarType> distributionPosition{ ScalarType(0), ScalarType(1) };
+			vector<double> populations(count);
+			vector<ScalarType> radii(count);
+			vector<VectorType> centers(count);
+			for (auto k = 0; k < clusterCount; ++k)
+			{
+				populations[size_t(k)] = 1.0 / (k + 1);
+				auto const radius = extent * ScalarType(pow(double(largestClusterVolumeShare) / (k + 1), 1.0 / dimensions)) / 2;
+				// Keeping a center a radius away from the boundary is what lets the offsets below go unclamped, and a clamp would pile features onto the boundary
+				auto const span = extent - 2 * radius;
+				radii[size_t(k)] = radius;
+				centers[size_t(k)] = VectorTraits<VectorType>::FromArray(
+					MakeRandomArray([&] { return radius + span * distributionPosition(randomGenerator); }, make_index_sequence<size_t(dimensions)>()));
+			}
+
+			// Drawn over a unit radius and scaled per cluster, the profile of a cluster being the same at every size
+			array offsetPositions = { ScalarType(-1), ScalarType(-0.5), ScalarType(0), ScalarType(0.5), ScalarType(1) };
+			array offsetWeights = { ScalarType(0), ScalarType(0.1), ScalarType(1), ScalarType(0.1), ScalarType(0) };
+			piecewise_linear_distribution<ScalarType> distributionOffset{ offsetPositions.begin(), offsetPositions.end(), offsetWeights.begin() };
+			discrete_distribution<int> distributionCluster{ populations.begin(), populations.end() };
 			uniform_real_distribution<ScalarType> distributionAspect{ ScalarType(0.5), ScalarType(2) };
 
 			vector<Feature<TSpatialKey>> data{ size_t(datasetSize) };
-			array islandCenters = { islandRadius, extent / 2, extent - islandRadius };
 			for (auto i = 0; i < datasetSize; ++i)
 			{
-				auto const island = distributionIslandIndex(randomGenerator);
-				auto const islandCenter = islandCenters[island];
-				auto center = VectorType{ std::clamp(islandCenter + distributionOffset(randomGenerator), zero, extent), std::clamp(islandCenter + distributionOffset(randomGenerator), zero, extent) };
-				if constexpr (SpatialKeyTraits<TSpatialKey>::Dimensions == 3)
-				{
-					center[2] = std::clamp(islandCenter + distributionOffset(randomGenerator), zero, extent);
-				}
+				auto const cluster = size_t(distributionCluster(randomGenerator));
+				auto const radius = radii[cluster];
+				auto const center = centers[cluster] + VectorTraits<VectorType>::FromArray(
+					MakeRandomArray([&] { return radius * distributionOffset(randomGenerator); }, make_index_sequence<size_t(dimensions)>()));
 
 				if constexpr (SpatialKeyIsPoint<TSpatialKey>)
 				{
@@ -162,11 +179,36 @@ namespace
 				}
 			}
 
-			return Dataset{ DatasetName_Islands, data };
+			return Dataset{ DatasetName_Clusters, data };
 		}
 	};
 }
 
+
+// Fixed for the same reason as QueryRandomSeed
+constexpr auto DatasetShuffleRandomSeed = 5081;
+
+// Data read from a file comes in the order it was stored in, which for real data is usually a spatial one. That order is worth something to an index that builds by inserting the elements one
+// by one and nothing to one that sorts them itself, so it is taken away here and all of them start from the same ground. The other datasets are random by construction, except Polygon, which
+// is shuffled where it is generated
+template <typename TSpatialKey>
+void ShuffleKeys(vector<TSpatialKey>& keys)
+{
+	Catch::SimplePcg32 randomGenerator{ DatasetShuffleRandomSeed };
+	shuffle(keys.begin(), keys.end(), randomGenerator);
+}
+
+// For the synthetic sets generated in a spatial order rather than at random. The ids are put back in the order of the array, which some of the indices rely on
+template <typename TSpatialKey>
+void ShuffleFeatures(vector<Feature<TSpatialKey>>& data, int count)
+{
+	Catch::SimplePcg32 randomGenerator{ DatasetShuffleRandomSeed };
+	shuffle(data.begin(), data.begin() + count, randomGenerator);
+	for (auto i = 0; i < count; ++i)
+	{
+		data[i].id = i;
+	}
+}
 
 template <typename TSpatialKey>
 shared_ptr<Dataset<TSpatialKey>> LoadShapeFile(std::filesystem::path const& path)
@@ -200,6 +242,7 @@ shared_ptr<Dataset<TSpatialKey>> LoadShapeFile(std::filesystem::path const& path
 
 	auto const maxSize = GetDatasetSizeFromOrder(sizeRange.second - 1);
 	auto data = shapeFile.GetKeys<TSpatialKey>(maxSize);
+	ShuffleKeys(data);
 	return make_shared<Dataset<TSpatialKey>>(path.filename().string(), std::move(data));
 }
 
@@ -247,6 +290,7 @@ shared_ptr<Dataset<TSpatialKey>> LoadObjFile(std::filesystem::path const& path)
 			}
 		}
 
+		ShuffleKeys(verts);
 		return make_shared<Dataset<TSpatialKey>>(path.filename().string(), std::move(verts));
 	}
 }
@@ -446,6 +490,98 @@ struct DatasetPolygon : Dataset<TSpatialKey>
 				}
 			}
 		}
+
+		// Generated along its two circles, which would leave the indices that build by insertion working on a sorted input while the rest gain nothing
+		ShuffleFeatures(dataset.data_, newSize);
+	}
+};
+
+
+// A cadastre: the extent divided into as many cells as the dataset has features, by recursively splitting the longest axis of a cell at a random share of it between SplitRange and
+// 1 - SplitRange, the whole of it then turned by RotationDegrees, so that the cells still cover the extent exactly and overlap nowhere while the boxes around them overlap as real ones do -
+// neither of which any other set here has. Their sizes spread as the recursion deepens - 1900x between the 5th and the 95th percentile at 10^5 - the multi-scale property none of them has either
+template <typename TSpatialKey>
+struct DatasetParcels : Dataset<TSpatialKey>
+{
+	using KeyTraits = SpatialKeyTraits<TSpatialKey>;
+	using ScalarType = typename KeyTraits::ScalarType;
+	using BoxType = typename KeyTraits::BoxType;
+
+	static constexpr auto Extent = ScalarType(10);
+
+	// The smallest share of a side a split can take. It is the one knob and it moves two things at once: the aspect ratio of a cell stays under 1 / SplitRange, and the spread of the cell sizes
+	// grows as it falls, since a cell's volume is the product of the split fractions above it
+	static constexpr auto SplitRange = ScalarType(0.1);
+
+	// The angle between the cadastre and the coordinate axes. Real parcels rarely line up with them, and once they do not, the box around a cell reaches past it into its neighbours - the one
+	// property of real data no synthetic set here had. The angle is small because the box of a turned cell is at most cot(angle) times longer than it is wide, so a larger one would trade the
+	// elongated boxes away, and the overlap does not need it: at 5 degrees a box already overlaps 6 others, at 45 only 8.5
+	static constexpr auto RotationDegrees = 5.0;
+
+	explicit DatasetParcels(int maxSize)
+		: Dataset<TSpatialKey>{ DatasetName_Parcels, std::vector<TSpatialKey>(size_t(maxSize)) }
+	{
+		this->onSizeChange_ = OnSizeChange;
+	}
+
+	static void Split(DatasetParcels& dataset, Catch::SimplePcg32& randomGenerator, uniform_real_distribution<ScalarType>& distributionSplit, BoxType const& cell, int count, int firstIndex)
+	{
+		if (count == 1)
+		{
+			dataset.data_[firstIndex] = { firstIndex, cell };
+			return;
+		}
+
+		auto const axis = int(MaximumValue(cell.Sizes()).second);
+		auto const position = cell.Min()[axis] + cell.Size(axis) * distributionSplit(randomGenerator);
+		auto const lowCount = count / 2;
+		Split(dataset, randomGenerator, distributionSplit, cell.GetReducedFromAbove(axis, position), lowCount, firstIndex);
+		Split(dataset, randomGenerator, distributionSplit, cell.GetReducedFromBelow(axis, position), count - lowCount, firstIndex + lowCount);
+	}
+
+	// The box around a cell once the cadastre is turned about the center of its extent, which in three dimensions leaves the third axis where it is, the cells being extruded rather than tilted
+	static BoxType GetRotatedBounds(BoxType const& cell, ScalarType sine, ScalarType cosine)
+	{
+		auto const pivot = Extent / 2;
+		auto const center = cell.Center();
+		auto const sizes = cell.Sizes();
+		auto const x = (center[0] - pivot) * cosine - (center[1] - pivot) * sine + pivot;
+		auto const y = (center[0] - pivot) * sine + (center[1] - pivot) * cosine + pivot;
+		auto const halfWidth = (sizes[0] * std::abs(cosine) + sizes[1] * std::abs(sine)) / 2;
+		auto const halfHeight = (sizes[0] * std::abs(sine) + sizes[1] * std::abs(cosine)) / 2;
+
+		auto min = cell.Min();
+		auto max = cell.Max();
+		min[0] = x - halfWidth;
+		min[1] = y - halfHeight;
+		max[0] = x + halfWidth;
+		max[1] = y + halfHeight;
+		return { min, max };
+	}
+
+	static void OnSizeChange(Dataset<TSpatialKey>& datasetBase, int newSize)
+	{
+		auto& dataset = static_cast<DatasetParcels&>(datasetBase);
+		dataset.SetSize_(newSize);
+
+		// Generated whole at every size, a part of a tessellation not being one
+		Catch::SimplePcg32 randomGenerator{ DatasetMaker<TSpatialKey>::DefaultRandomSeed };
+		uniform_real_distribution<ScalarType> distributionSplit{ SplitRange, ScalarType(1) - SplitRange };
+		Split(dataset, randomGenerator, distributionSplit, BoxType::Square(Extent), newSize, 0);
+
+		// Turned as one piece, so that the cells keep tiling the extent exactly while the boxes around them, which is all an index ever sees of them, overlap
+		auto const sine = ScalarType(std::sin(RotationDegrees * Pi / 180));
+		auto const cosine = ScalarType(std::cos(RotationDegrees * Pi / 180));
+		for (auto i = 0; i < newSize; ++i)
+		{
+			auto& key = dataset.data_[i].spatialKey;
+			key = GetRotatedBounds(key, sine, cosine);
+		}
+
+		dataset.boundingBox_ = {};
+
+		// Generated in the order of the recursion, which is a spatial one
+		ShuffleFeatures(dataset.data_, newSize);
 	}
 };
 
@@ -484,31 +620,32 @@ struct SyntheticDatasetGenerator : Generators::State<Dataset<TSpatialKey>>
 				break;
 
 			case 2:
-				if (IsSelected(DatasetKey, DatasetName_Islands, 0))
+				if (IsSelected(DatasetKey, DatasetName_Clusters, 0))
 				{
 					DatasetMaker<TSpatialKey> maker{ 1000, ScalarType(0.01) };
-					return this->Next(maker.MakeIslands(maxSize, ScalarType(0.01)));
+					return this->Next(maker.MakeClusters(maxSize, 32, ScalarType(0.005)));
 				}
 
 				break;
 
 			case 3:
-				if constexpr (SpatialKeyIsBox<TSpatialKey>)
+				if (IsSelected(DatasetKey, DatasetName_Polygon, 0))
 				{
-					if (IsSelected(DatasetKey, DatasetName_Aspect, 0))
-					{
-						DatasetMaker<TSpatialKey> maker{ 10, ScalarType(0.0005) };
-						return this->Next(maker.Make(DatasetName_Aspect, maxSize, 0, 100));
-					}
+					DatasetPolygon<TSpatialKey> polygon{ maxSize };
+					return this->Next(std::move(polygon));
 				}
 
 				break;
 
 			case 4:
-				if (IsSelected(DatasetKey, DatasetName_Polygon, 0))
+				// Box keys only: the cells are what this set is for, and their centers would be one more evenly spread point set
+				if constexpr (SpatialKeyIsBox<TSpatialKey>)
 				{
-					DatasetPolygon<TSpatialKey> polygon{ maxSize };
-					return this->Next(std::move(polygon));
+					if (IsSelected(DatasetKey, DatasetName_Parcels, 0))
+					{
+						DatasetParcels<TSpatialKey> parcels{ maxSize };
+						return this->Next(std::move(parcels));
+					}
 				}
 
 				break;
@@ -556,7 +693,7 @@ void SaveImage(Dataset<TSpatialKey> const& dataset)
 template <typename TSpatialKey>
 void SaveShapefile(Dataset<TSpatialKey> const& dataset)
 {
-	if (!IsSelected("StoreDatasetFormat", "shp", -1, false) || EndsWith<CaseInsensitiveCharTraits>(dataset.GetName(), ".shp"))
+	if (!IsSelected("StoreDatasetFormat", "shp", -1, false))
 	{
 		return;
 	}
@@ -571,10 +708,23 @@ void SaveShapefile(Dataset<TSpatialKey> const& dataset)
 	ShapeFile::Write(filepath, dataset.GetKeys());
 }
 
+// The corners of a box as a mesh writer wants them, and the six quads over them, as zero-based indices
+constexpr auto BoxCornerCount = 8;
+constexpr int BoxQuads[][4] = { { 0, 1, 2, 3 }, { 4, 5, 6, 7 }, { 0, 3, 5, 4 }, { 3, 2, 6, 5 }, { 2, 1, 7, 6 }, { 1, 0, 4, 7 } };
+
+template <typename TBox>
+array<Vector3f, BoxCornerCount> GetBoxCorners(TBox const& box)
+{
+	auto const a = Convert<Vector3f>(box.Min());
+	auto const b = Convert<Vector3f>(box.Max());
+	return { Vector3f{ a[0], a[1], b[2] }, a, Vector3f{ b[0], a[1], a[2] }, Vector3f{ b[0], a[1], b[2] },
+		Vector3f{ a[0], b[1], b[2] }, b, Vector3f{ b[0], b[1], a[2] }, Vector3f{ a[0], b[1], a[2] } };
+}
+
 template <typename TSpatialKey>
 void SaveObj(Dataset<TSpatialKey> const& dataset)
 {
-	if (!IsSelected("StoreDatasetFormat", "obj", -1, false) || EndsWith<CaseInsensitiveCharTraits>(dataset.GetName(), ".obj"))
+	if (!IsSelected("StoreDatasetFormat", "obj", -1, false))
 	{
 		return;
 	}
@@ -595,14 +745,11 @@ void SaveObj(Dataset<TSpatialKey> const& dataset)
 		return;
 	}
 
-	auto writeVertex = [&file](Vector3f const& v)
-		{
-			file << "v  " << v[0] << ' ' << v[1] << ' ' << v[2] << '\n';
-		};
-
 	auto const& keys = dataset.GetKeys();
 	for (auto const& key : keys)
 	{
+		// OBJ has no way to say "a point", so a point key needs a surrogate box, and no constant size can suit datasets whose extents span five orders of magnitude. SavePly below is the
+		// way out of that
 		BoxType box;
 		if constexpr (SpatialKeyIsPoint<TSpatialKey>)
 		{
@@ -613,27 +760,84 @@ void SaveObj(Dataset<TSpatialKey> const& dataset)
 			box = key;
 		}
 
-		auto const& a = Convert<Vector3f>(box.Min());
-		auto const& b = Convert<Vector3f>(box.Max());
-		writeVertex({ a[0], a[1], b[2] });
-		writeVertex(a);
-		writeVertex({ b[0], a[1], a[2] });
-		writeVertex({ b[0], a[1], b[2] });
-		writeVertex({ a[0], b[1], b[2] });
-		writeVertex(b);
-		writeVertex({ b[0], b[1], a[2] });
-		writeVertex({ a[0], b[1], a[2] });
+		for (auto const& corner : GetBoxCorners(box))
+		{
+			file << "v  " << corner[0] << ' ' << corner[1] << ' ' << corner[2] << '\n';
+		}
 	}
 
 	file << '\n';
-	for (auto startIndex = 0LL, keyIndex = 0LL; keyIndex < Size(keys); ++keyIndex, startIndex += 8)
+	for (auto startIndex = 0LL, keyIndex = 0LL; keyIndex < Size(keys); ++keyIndex, startIndex += BoxCornerCount)
 	{
-		file << "f " << startIndex + 1 << ' ' << startIndex + 2 << ' ' << startIndex + 3 << ' ' << startIndex + 4 << '\n';
-		file << "f " << startIndex + 5 << ' ' << startIndex + 6 << ' ' << startIndex + 7 << ' ' << startIndex + 8 << '\n';
-		file << "f " << startIndex + 1 << ' ' << startIndex + 4 << ' ' << startIndex + 6 << ' ' << startIndex + 5 << '\n';
-		file << "f " << startIndex + 4 << ' ' << startIndex + 3 << ' ' << startIndex + 7 << ' ' << startIndex + 6 << '\n';
-		file << "f " << startIndex + 3 << ' ' << startIndex + 2 << ' ' << startIndex + 8 << ' ' << startIndex + 7 << '\n';
-		file << "f " << startIndex + 2 << ' ' << startIndex + 1 << ' ' << startIndex + 5 << ' ' << startIndex + 8 << '\n';
+		for (auto const& quad : BoxQuads)
+		{
+			file << "f " << startIndex + quad[0] + 1 << ' ' << startIndex + quad[1] + 1 << ' ' << startIndex + quad[2] + 1 << ' ' << startIndex + quad[3] + 1 << '\n';
+		}
+	}
+}
+
+// PLY carries a bare vertex list, so a point dataset exports as its keys and nothing else - no surrogate box and no size constant to pick. Box keys get the same eight corners and six quads
+// as the OBJ export
+template <typename TSpatialKey>
+void SavePly(Dataset<TSpatialKey> const& dataset)
+{
+	if (!IsSelected("StoreDatasetFormat", "ply", -1, false))
+	{
+		return;
+	}
+
+	auto const filename = GetFilename<TSpatialKey>(dataset);
+	auto const filepath = GetOutputPath() / filesystem::path{ filename + ".ply" };
+	if (exists(filepath))
+	{
+		return;
+	}
+
+	std::ofstream file(filepath);
+	if (!file)
+	{
+		return;
+	}
+
+	constexpr auto isPoint = SpatialKeyIsPoint<TSpatialKey>;
+	auto const& keys = dataset.GetKeys();
+	auto const keyCount = Size(keys);
+
+	file << "ply\nformat ascii 1.0\n"
+		"element vertex " << keyCount * (isPoint ? 1 : BoxCornerCount) << "\nproperty float x\nproperty float y\nproperty float z\n";
+	if constexpr (!isPoint)
+	{
+		file << "element face " << keyCount * Size(BoxQuads) << "\nproperty list uchar int vertex_index\n";
+	}
+
+	file << "end_header\n";
+	file.precision(std::numeric_limits<float>::max_digits10);	// The properties above are declared float, so this is what round-trips them and no more
+
+	for (auto const& key : keys)
+	{
+		if constexpr (isPoint)
+		{
+			auto const point = Convert<Vector3f>(key);
+			file << point[0] << ' ' << point[1] << ' ' << point[2] << '\n';
+		}
+		else
+		{
+			for (auto const& corner : GetBoxCorners(key))
+			{
+				file << corner[0] << ' ' << corner[1] << ' ' << corner[2] << '\n';
+			}
+		}
+	}
+
+	if constexpr (!isPoint)
+	{
+		for (auto startIndex = 0LL, keyIndex = 0LL; keyIndex < keyCount; ++keyIndex, startIndex += BoxCornerCount)
+		{
+			for (auto const& quad : BoxQuads)
+			{
+				file << "4 " << startIndex + quad[0] << ' ' << startIndex + quad[1] << ' ' << startIndex + quad[2] << ' ' << startIndex + quad[3] << '\n';
+			}
+		}
 	}
 }
 
@@ -650,7 +854,18 @@ struct TestContextBase
 };
 
 
-static constexpr auto QueriesPerAxis = 21;
+// The grid queries form a lattice with the same number of samples along every axis, so the count per axis follows from the target total rather than the other way round. Keeping the total
+// equal in every dimension is what makes the query timings comparable across dimensions - a fixed count per axis makes it grow as its power
+constexpr auto GridQueryCount = 2000;
+
+// Queries centred on features drawn from the dataset. A grid over the bounding box spends most of its queries in empty space on any clustered dataset, so on its own it measures how fast an
+// index proves emptiness more than it measures query throughput. That is a real property, hence the grid stays, but as the smaller part of the query set
+constexpr auto DataQueryCount = 6000;
+
+// Fixed, so that every run asks the same questions. Deliberately not the seed the datasets are generated with, and deliberately not a configuration key: a conclusion that moves with the seed
+// means the experiment is too small and should be made larger, not re-rolled
+constexpr auto QueryRandomSeed = 4177;
+
 constexpr auto QueryNearestCount = 15;
 
 template <typename TSpatialKey>
@@ -661,11 +876,23 @@ struct TestContext : TestContextBase
 	using VectorType = typename SpatialKeyTraits<TSpatialKey>::VectorType;
 	using BoxType = typename SpatialKeyTraits<TSpatialKey>::BoxType;
 
+	// The share of the dataset bounding box a query covers, cycled over the queries. Taking the Dimensions-th root of it gives the side of the query box, which keeps that share - and with it
+	// the number of features a query returns on an evenly spread dataset - the same in any number of dimensions.
+	static constexpr array QueryVolumeShares = { 1e-5, 1e-4, 1e-3 };
+
+	// Divides the shares above. Without it a query centred on a feature of a clustered dataset returns a large part of the cluster it sits in, which measures result handling rather than the
+	// traversal. It divides the share rather than the side of the box, so that it leaves the shares dimension-independent, as dividing a side by it would divide a share by its Dimensions-th
+	// power. The value is the square of the side divisor it replaced, which leaves the 2D queries where they were
+	static constexpr auto QueryVolumeReduction = 4096;
+
 
 	Dataset<TSpatialKey> const* dataset;
 
 	vector<BoxType> queries;
 	vector<double> queryResults;
+
+	// The queries in front of this index are the grid ones, the rest are centred on dataset features. Their result counts are reported separately
+	int gridQueryCount = 0;
 
 
 	explicit TestContext(Dataset<TSpatialKey> const& dataset, PerfRecord& record)
@@ -673,24 +900,37 @@ struct TestContext : TestContextBase
 	{
 		perfRecord = &record;
 
-		if constexpr (StartsWith(SpatialKeyTraits<TSpatialKey>::VectorTraitsType::Name, "array") && SpatialKeyTraits<TSpatialKey>::Dimensions == 2)
+		if constexpr (StartsWith(SpatialKeyTraits<TSpatialKey>::VectorTraitsType::Name, "array"))
 		{
-			SaveImage(dataset);
 			SaveObj(dataset);
-			if constexpr (SpatialKeyIsPoint<TSpatialKey>)
+			SavePly(dataset);
+			if constexpr (SpatialKeyTraits<TSpatialKey>::Dimensions == 2)
 			{
-				if (StartsWith(dataset.GetName(), "Synthetic"))
-				{
-					SaveShapefile(dataset);
-				}
+				SaveImage(dataset);
+				SaveShapefile(dataset);
 			}
 		}
 
-		auto const querySize = 2 * dataset.GetSmallestExtent() / std::max(1, QueriesPerAxis - 1);
-		ASSERT(querySize > 0);
-		QueryIterator firstQuery{ GetLowBound(dataset.GetData().back().spatialKey), dataset.GetBoundingBox(), QueriesPerAxis, { querySize / 16, querySize / 2, querySize } };
+		auto const extent = dataset.GetMeanExtent();
+		ASSERT(extent > 0);
+		auto const querySizes = Transform(QueryVolumeShares, [extent](double share)
+			{
+				return ScalarType(double(extent) * pow(share / QueryVolumeReduction, 1.0 / Dimensions));
+			});
+
+		queries.reserve(size_t(GridQueryCount) + DataQueryCount);
+		auto const queriesPerAxis = int( lround( pow( GridQueryCount, 1.0 / Dimensions ) ) );
+		QueryIterator firstQuery{ GetLowBound(dataset.GetData().back().spatialKey), dataset.GetBoundingBox(), queriesPerAxis, querySizes };
 		std::copy(firstQuery, QueryIterator<VectorType>{}, back_inserter(queries));
-		//ASSERT(queryCount == QueriesPerAxis * QueriesPerAxis * 2);
+		gridQueryCount = int(Size(queries));
+
+		Catch::SimplePcg32 randomGenerator{ QueryRandomSeed };
+		uniform_int_distribution featureIndex{ 0, dataset.GetSize() - 1 };
+		for (auto i = 0; i < DataQueryCount; ++i)
+		{
+			auto const center = SpatialKeyTraits<TSpatialKey>::GetCenter(dataset.GetData()[featureIndex(randomGenerator)].spatialKey);
+			queries.push_back(BoxType::FromCenterAndSize(center, querySizes[i % Size(querySizes)]));
+		}
 
 		queryResults.reserve(queries.size());
 
@@ -736,19 +976,39 @@ struct TestContext : TestContextBase
 		queryResults.clear();
 	}
 
+	// The count of features the range queries return, i.e. what the range query timings are the throughput of. It is a property of the dataset and the query set rather than of an index - all indices
+	// run the same queries and are verified to return the same counts - but is recorded on every row to keep the rows self-contained
+	[[nodiscard]] string PrintQueryResultCounts() const
+	{
+		AggregateStats<int> gridCounts;
+		AggregateStats<int> dataCounts;
+		for (auto i = 0; i < Size(queryResults); ++i)
+		{
+			(i < gridQueryCount ? gridCounts : dataCounts).AddValue(int(queryResults[i]));
+		}
+
+		return "Results# grid: " + gridCounts.Print() + ", data: " + dataCounts.Print();
+	}
+
 	// Returns the change factor compared to the previous best time
 	double StoreResults(string_view testName, string_view spatialIndexName)
 	{
-		pair<int64_t, int64_t> accumulatedOldAndNewBestTimes{};
+		pair<double, double> accumulatedOldAndNewBestTimes{};
 
 		for (auto const& action : timings.GetAllActions())
 		{
 			auto entry = this->perfRecord->MakeEntry(*dataset, spatialIndexName, testName, action.first);
-			PerfRecord::Stats stats{ int64_t(action.second.bestTime), action.second.memoryDelta/* == std::numeric_limits<int64_t>::max() ? 0 : action.second.memoryDelta*/, action.second.failed };
+			PerfRecord::Stats stats{ ToMicroseconds(action.second.bestTime), action.second.memoryDelta/* == std::numeric_limits<int64_t>::max() ? 0 : action.second.memoryDelta*/, action.second.failed };
 			if (auto const queryStats = static_cast<QueryStats*>(action.second.extra.get()))
 			{
 				stats.queryVisitedNodes = queryStats->VisitedNodesCount;
 				stats.queryObjectTests = queryStats->ObjectTestsCount;
+			}
+
+			// Only for range queries: a k-nearest query returns QueryNearestCount features by definition
+			if (string_view{ action.first } == OpNameQueryRange )
+			{
+				stats.info = PrintQueryResultCounts();
 			}
 
 			if (resetResults)
@@ -764,7 +1024,7 @@ struct TestContext : TestContextBase
 		if (!timings.GetAllActions().empty())
 		{
 			auto entry = this->perfRecord->MakeEntry(*dataset, spatialIndexName, testName, "Total");
-			PerfRecord::Stats stats{ int64_t(timings.BestIterationTime()) };
+			PerfRecord::Stats stats{ ToMicroseconds(timings.BestIterationTime()) };
 			stats.info = indexStats;
 			if (resetResults)
 			{
@@ -776,7 +1036,7 @@ struct TestContext : TestContextBase
 			}
 		}
 
-		return accumulatedOldAndNewBestTimes.second > 0 ? double(accumulatedOldAndNewBestTimes.second) * 100.0 / double(accumulatedOldAndNewBestTimes.first) : -1;
+		return accumulatedOldAndNewBestTimes.second > 0 ? accumulatedOldAndNewBestTimes.second * 100.0 / accumulatedOldAndNewBestTimes.first : -1;
 	}
 };
 
@@ -886,7 +1146,7 @@ struct Test_Load_Query_Destroy : TestScenario<TSpatialKey>
 };
 
 template <typename TSpatialKey>
-struct Test_Load_QueryBox_Destroy final : Test_Load_Query_Destroy<TSpatialKey>
+struct Test_Load_QueryRange_Destroy final : Test_Load_Query_Destroy<TSpatialKey>
 {
 	using BoxType = typename SpatialKeyTraits<TSpatialKey>::BoxType;
 
@@ -897,7 +1157,7 @@ struct Test_Load_QueryBox_Destroy final : Test_Load_Query_Destroy<TSpatialKey>
 
 	[[nodiscard]] char const* GetOpName() const override
 	{
-		return OpNameQueryBox;
+		return OpNameQueryRange;
 	}
 
 	[[nodiscard]] double RunQuery(SpatialIndexAdapter<TSpatialKey> const& wrapper, std::shared_ptr<void> const& spatialIndex, BoxType const& query) const override
@@ -974,7 +1234,7 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 
 	static int Run_(TestContext<TSpatialKey>& test, SpatialIndexAdapter<TSpatialKey> const& wrapper)
 	{
-		Timings::ActionStats* statsQueryBox = nullptr;
+		Timings::ActionStats* statsQueryRange = nullptr;
 
 		auto const& dataset = *test.dataset;
 
@@ -1037,7 +1297,7 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 
 			TheQueryStats.Clear();
 			test.timings.Record(
-				OpNameQueryBox,
+				OpNameQueryRange,
 				[&]
 				{
 					auto queryIndex = 0;
@@ -1051,8 +1311,8 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 
 						++queryIndex;
 					}
-				}, &statsQueryBox);
-			statsQueryBox->extra = make_shared<QueryStats>(TheQueryStats);
+				}, &statsQueryRange);
+			statsQueryRange->extra = make_shared<QueryStats>(TheQueryStats);
 			TheQueryStats.Clear();
 
 			if (!statsStored)
@@ -1062,7 +1322,7 @@ struct Test_Insert_Erase_Query : TestScenario<TSpatialKey>
 			}
 		}
 
-		return test.VerifyQueryResults(std::move(queryResults), wrapper.Name(), statsQueryBox) ? 0 : 1;
+		return test.VerifyQueryResults(std::move(queryResults), wrapper.Name(), statsQueryRange) ? 0 : 1;
 	}
 };
 
@@ -1177,7 +1437,7 @@ int RunSpatialKey(PerfRecord& perfRecord)
 
 			TestContext testContext{ dataset, perfRecord };
 
-			totalFailures += RunScenario<SpatialKeyType>(testContext, Test_Load_QueryBox_Destroy<SpatialKeyType>{});
+			totalFailures += RunScenario<SpatialKeyType>(testContext, Test_Load_QueryRange_Destroy<SpatialKeyType>{});
 
 			totalFailures += RunScenario<SpatialKeyType>(testContext, Test_Load_QueryNearest_Destroy<SpatialKeyType>{});
 

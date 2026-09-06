@@ -188,7 +188,7 @@ TEST_CASE("KdBoxTree_Common")
 	STATIC_REQUIRE(sizeof(KdBoxTree<Vector2>::Node) == 48);
 	STATIC_REQUIRE(sizeof(KdBoxTree<Box2>::Node) == 56);
 	STATIC_REQUIRE(sizeof(KdBoxTree<Vector3f>::Node) == 40);
-	STATIC_REQUIRE(sizeof(KdBoxTree<Box3f>::Node) == 48);
+	STATIC_REQUIRE(sizeof(KdBoxTree<Box3f>::Node) == 44);
 
 	Test_KdBoxTree_Common(Vector2{});
 	Test_KdBoxTree_Common(Box2{});
@@ -340,6 +340,38 @@ TEST_CASE("KdBoxTree_PartitionClassification")
 		if (high >= 0)
 		{
 			REQUIRE(nodes[high].box.Min()[axis] >= split);
+		}
+	}
+}
+
+TEST_CASE("KdBoxTree_SplitRetriesTheOtherAxes")
+{
+	// Boxes long in X and stacked along Y: every one of them crosses the middle of X, so a split there leaves all of them straddling and is rejected, while a split along Y separates
+	// them all. The node can only split at all by trying the axis after the longest one, and without that it stays a leaf holding more elements than it is allowed to.
+	// The dataset that used to cover this - Synthetic_Aspect, the one set with elongated overlapping boxes - was retired from the benchmark, so it is covered here instead
+	constexpr auto Count = 40;
+	constexpr auto MaxElements = 32;
+	static_assert(Count > MaxElements, "The node has to be over the limit for a split to be attempted at all");
+
+	vector<Feature<Box2>> features;
+	for (auto i = 0; i < Count; ++i)
+	{
+		auto const y = 0.25 * i;
+		features.push_back({ i, Box2{ { 10, y }, { 90, y + 0.1 } } });
+	}
+
+	KdBoxTree const tree{ MakePointersVector(as_const(features)), MaxElements };
+
+	auto const& root = tree.Nodes()[0];
+	REQUIRE(root.box.Sizes()[0] > root.box.Sizes()[1]);
+	REQUIRE_FALSE(root.IsLeaf());
+	REQUIRE(root.splitAxis == 1);
+
+	for (auto const& node : tree.Nodes())
+	{
+		if (node.IsLeaf())
+		{
+			REQUIRE(node.GetElementsCount() <= MaxElements);
 		}
 	}
 }

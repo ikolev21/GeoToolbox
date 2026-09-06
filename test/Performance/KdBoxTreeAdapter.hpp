@@ -14,6 +14,7 @@ namespace GeoToolbox
 	struct KdBoxTreeStats
 	{
 		int maxHeight;
+		int middleNodes;
 		AggregateStats<int> elementsPerNode;
 		AggregateStats<double> middlePercent;
 		AggregateStats<int> heightBalance;
@@ -50,7 +51,7 @@ namespace GeoToolbox
 			stream << "Nodes: " << index.GetNodesCount() << " Elems/Leaf: " << stats.elementsPerNode;
 			if (!stats.middlePercent.IsEmpty())
 			{
-				stream << " mid%: " << stats.middlePercent;
+				stream << " Middle: " << stats.middleNodes << " mid%: " << stats.middlePercent;
 			}
 
 			stream << " Height: " << stats.maxHeight;// << ", balance: " << stats.heightBalance << ", element count balance: " << stats.elementsCountBalance;
@@ -93,6 +94,7 @@ namespace GeoToolbox
 		};
 
 		KdBoxTreeStats result;
+		result.middleNodes = 0;
 
 		std::vector<NodeStats> stats( tree.GetNodesCount() );
 		auto nodeIndex = 0;
@@ -154,6 +156,7 @@ namespace GeoToolbox
 				{
 					if ( node.boxData.middleChild >= 0 )
 					{
+						++result.middleNodes;
 						middleCount += stats[node.boxData.middleChild].totalElements;
 					}
 

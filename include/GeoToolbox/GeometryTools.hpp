@@ -928,6 +928,30 @@ namespace GeoToolbox
 		return 0;
 	}
 
+	// The distance to the farthest point of the box, i.e. the radius of the smallest sphere around the point that contains the whole box
+	template <class TVector>
+	[[nodiscard]] auto GetMaxDistanceSquared(TVector const& point, Box<TVector> const& box)
+	{
+		// Precondition: the box is not empty (see GetDistanceSquared)
+		DEBUG_ASSERT(!box.IsEmpty());
+
+		typename VectorTraits<TVector>::ScalarType result{ 0 };
+		auto const center = box.Center();
+		for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
+		{
+			if (point[i] <= center[i])
+			{
+				result += Square(box.Max()[i] - point[i]);
+			}
+			else
+			{
+				result += Square(point[i] - box.Min()[i]);
+			}
+		}
+
+		return result;
+	}
+
 	template <class TVector>
 	[[nodiscard]] auto GetDistance(TVector const& a, Box<TVector> const& b)
 	{

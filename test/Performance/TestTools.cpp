@@ -12,6 +12,7 @@
 
 #include <array>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -148,6 +149,8 @@ void PerfRecord::Save() const
 	WriteFieldNames<Stats>(outfile);
 	outfile << '\n';
 
+	// The times are in microseconds, with the single decimal digit the measuring resolution gives (see Ticks). The same everywhere rather than by magnitude, so that the column stays aligned
+	outfile << fixed << setprecision(1);
 	for (auto const& entry : entries_)
 	{
 		outfile << runId_ << Separator;
@@ -245,7 +248,7 @@ void PerfRecord::Load()
 	}
 }
 
-void PerfRecord::MergeEntry(Entry const& entry, Stats const& newStats, std::pair<int64_t, int64_t>* accumulatedOldAndNewBestTimes)
+void PerfRecord::MergeEntry(Entry const& entry, Stats const& newStats, std::pair<double, double>* accumulatedOldAndNewBestTimes)
 {
 	auto const previousExisted = entries_.count(entry) > 0;
 	auto& stats = entries_[entry];
@@ -351,7 +354,7 @@ int main(int argc, char* argv[])
 			{
 				{ "RunId", "", "An identifier of the test run. Default value equals FileId" },
 				{ "FileId", RUNTIME_ENVIRONMENT_ID, "A string to include in the name of the test results file, may be empty. Default: {def}" },
-				{ "Reset", false, "Resets the stored test results. Default: {def}" },
+				{ "Reset", false, "Resets the stored test results, which for a repeated run applies to the first repeat only. Default: {def}" },
 				{ "Record", SelectDebugRelease(false, true), "Should the test results be recorded to a file. Default is 1 in optimized builds, 0 in debug build" },
 				{ "Index", "", "Comma-separated list of indices to run tests for (partial case-insensitive match), for example: Index=nano,geos" },
 				{ "Dataset", "", "Comma-separated list of datasets to run tests for (partial case-insensitive match), for example: Dataset=synthetic,parcels" },
@@ -362,7 +365,7 @@ int main(int argc, char* argv[])
 				{ "SpatialKey", "", "Comma-separated list of spatial keys to run the tests for, possible ones are 'point' and 'box'" },
 				{ "Vector", "", "Comma-separated list of vector types to run the tests for (if compiled), like 'array2d' or 'array3f'" },
 				{ "Dimensions", "", "Comma-separated list of dimensions to run the tests for" },
-				{ "StoreDatasetFormat", "", "Comma-separated list of formats to store the dataset used for each test, either PNG, SHP or OBJ" },
+				{ "StoreDatasetFormat", "", "Comma-separated list of formats to store the dataset used for each test, one of PNG, SHP, OBJ or PLY" },
 			}
 			);
 
@@ -411,6 +414,10 @@ int main(int argc, char* argv[])
 			{
 				break;
 			}
+
+			// Resetting is for the first of a repeated series of runs only. The ones after it have to merge into what it left, as they do without it, or each would overwrite the one before and
+			// the recorded time would be the last of the repeats instead of the best of them
+			GetConfig().InsertOrAssign("Reset", 0);
 		}
 
 		std::cout << "Time elapsed: " << PrintMilliSeconds(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count()) << '\n';

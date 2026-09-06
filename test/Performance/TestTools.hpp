@@ -12,6 +12,7 @@
 #include "GeoToolbox/SpatialTools.hpp"
 #include "GeoToolbox/TestTools.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -163,19 +164,23 @@ public:
 
 	BoxType GetBoundingBox() const;
 
-	auto GetSmallestExtent() const
+	// The side of the cube of the same volume as the bounding box. Query boxes are sized from it, so that a query covers the intended share of that volume whatever the shape of the dataset -
+	// taking the smallest extent instead makes the query smaller than intended by the aspect ratio. Degenerate axes are left out of the mean rather than collapsing it to zero
+	auto GetMeanExtent() const
 	{
 		auto const sizes = GetBoundingBox().Sizes();
-		auto minSize = std::numeric_limits<ScalarType>::max();
+		auto product = 1.0;
+		auto count = 0;
 		for (auto i = 0u; i < GeoToolbox::SpatialKeyTraits<TSpatialKey>::Dimensions; ++i)
 		{
-			if (sizes[i] > 0 && sizes[i] < minSize)
+			if (sizes[i] > 0)
 			{
-				minSize = sizes[i];
+				product *= double(sizes[i]);
+				++count;
 			}
 		}
 
-		return minSize;
+		return ScalarType(count > 0 ? std::pow(product, 1.0 / count) : 0);
 	}
 
 	void Clear();
@@ -258,7 +263,8 @@ public:
 
 	struct Stats
 	{
-		int64_t bestTime = std::numeric_limits<int64_t>::max();
+		// Microseconds, see GeoToolbox::ToMicroseconds. A double only because that is how it is written and read - it is measured in whole Ticks
+		double bestTime = std::numeric_limits<double>::max();
 		int64_t memoryDelta = 0;// std::numeric_limits<int64_t>::max();
 		bool failed = false;
 
@@ -335,7 +341,7 @@ public:
 		};
 	}
 
-	void MergeEntry(Entry const& entry, Stats const&, std::pair<int64_t, int64_t>* accumulatedOldAndNewBestTimes = nullptr);
+	void MergeEntry(Entry const& entry, Stats const&, std::pair<double, double>* accumulatedOldAndNewBestTimes = nullptr);
 
 	void SetEntry(Entry const& entry, Stats const&);
 };

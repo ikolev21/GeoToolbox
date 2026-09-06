@@ -31,6 +31,19 @@ namespace GeoToolbox
 		return value + zero;
 	}
 
+	// The unit elapsed times are measured in. A whole microsecond is too coarse - an action over a small dataset takes a fraction of one and would measure as zero - while a nanosecond is finer
+	// than any clock here delivers: the Windows performance counter ticks at exactly this period, and it is also the one decimal digit of a microsecond the results are printed with
+	using Ticks = std::chrono::duration<int64_t, std::ratio<1, 10'000'000>>;
+
+	constexpr int64_t TicksPerMicrosecond = 10;
+
+	constexpr int64_t TicksPerMillisecond = 1000 * TicksPerMicrosecond;
+
+	constexpr double ToMicroseconds(int64_t ticks) noexcept
+	{
+		return double(ticks) / TicksPerMicrosecond;
+	}
+
 	class Stopwatch
 	{
 		using TimePoint = std::chrono::time_point<std::chrono::steady_clock>;
@@ -62,6 +75,22 @@ namespace GeoToolbox
 		void Stop() noexcept
 		{
 			isRunning_ = false;
+		}
+
+		// Only valid while IsRunning() is true
+		[[nodiscard]] int64_t ElapsedTicks() const
+		{
+			using namespace std::chrono;
+			DEBUG_ASSERT(isRunning_);
+			return duration_cast<Ticks>(steady_clock::now() - start_).count();
+		}
+
+		// Only valid while IsRunning() is true
+		[[nodiscard]] int64_t ElapsedNanoseconds() const
+		{
+			using namespace std::chrono;
+			DEBUG_ASSERT(isRunning_);
+			return duration_cast<nanoseconds>(steady_clock::now() - start_).count();
 		}
 
 		// Only valid while IsRunning() is true
@@ -134,6 +163,13 @@ namespace GeoToolbox
 		[[nodiscard]] bool IsConstant( T x ) const noexcept
 		{
 			return count_ > 0 && x == minimum_ && x == maximum_;
+		}
+
+		[[nodiscard]] std::string Print() const
+		{
+			std::ostringstream text;
+			text << *this;
+			return text.str();
 		}
 
 
@@ -384,7 +420,7 @@ namespace GeoToolbox
 	struct MeasureResult
 	{
 		double result;
-		int64_t timeUs;
+		int64_t timeTicks;
 	};
 
 	template <class TFunction>
@@ -398,7 +434,7 @@ namespace GeoToolbox
 			result += measurable(i);
 		}
 
-		auto runTime = timer.ElapsedMicroseconds();
+		auto runTime = timer.ElapsedTicks();
 		return MeasureResult{ result, runTime };
 	}
 
@@ -437,7 +473,7 @@ namespace GeoToolbox
 		struct ActionStats
 		{
 			int64_t totalTime = 0;
-			double bestTime = std::numeric_limits<double>::max();
+			int64_t bestTime = std::numeric_limits<int64_t>::max();
 			int64_t iterationCount = 0;
 			int64_t memoryDelta = std::numeric_limits<int64_t>::max();
 			bool failed = false;
@@ -448,7 +484,7 @@ namespace GeoToolbox
 
 	private:
 
-		int64_t const minimumRunningTimeUs_;
+		int64_t const minimumRunningTime_;
 
 		int const stopWhenNotImprovedNTimes_;
 
@@ -480,7 +516,7 @@ namespace GeoToolbox
 
 
 		explicit Timings(int64_t minimumRunningTimeMs = 0, int stopWhenNotImprovedNTimes = 0, int maximumIterationCount = 0)
-			: minimumRunningTimeUs_{ minimumRunningTimeMs > 0 ? 1000 * minimumRunningTimeMs : UsPerSecond }
+			: minimumRunningTime_{ (minimumRunningTimeMs > 0 ? minimumRunningTimeMs : MsPerSecond) * TicksPerMillisecond }
 			, stopWhenNotImprovedNTimes_{ stopWhenNotImprovedNTimes }
 			, maximumIterationCount_{ SelectDebugRelease(1, maximumIterationCount > 0 ? maximumIterationCount : MaximumIterationCount) }
 		{
@@ -497,7 +533,7 @@ namespace GeoToolbox
 			auto& action = actions_[actionName];
 			action.iterationCount += repeats;
 			action.totalTime += runTime;
-			auto const avgTime = double(runTime) / repeats;
+			auto const avgTime = runTime / repeats;
 			if (avgTime < action.bestTime)
 			{
 				action.bestTime = avgTime;
@@ -515,7 +551,7 @@ namespace GeoToolbox
 
 		[[nodiscard]] int64_t MinimumRunningTime() const noexcept
 		{
-			return minimumRunningTimeUs_;
+			return minimumRunningTime_;
 		}
 
 		[[nodiscard]] int64_t TotalRunningTime() const noexcept
@@ -539,25 +575,25 @@ namespace GeoToolbox
 		}
 
 		template <class F>
-		std::invoke_result_t<F> Record(char const* actionName, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedUs = nullptr)
+		std::invoke_result_t<F> Record(char const* actionName, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedTicks = nullptr)
 		{
-			return Record(actionName, 1, nullptr, std::move(action), statsPtr, elapsedUs);
+			return Record(actionName, 1, nullptr, std::move(action), statsPtr, elapsedTicks);
 		}
 
 		template <class F>
-		std::invoke_result_t<F> Record(char const* actionName, int repeats, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedUs = nullptr)
+		std::invoke_result_t<F> Record(char const* actionName, int repeats, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedTicks = nullptr)
 		{
-			return Record(actionName, repeats, nullptr, std::move(action), statsPtr, elapsedUs);
+			return Record(actionName, repeats, nullptr, std::move(action), statsPtr, elapsedTicks);
 		}
 
 		template <class F>
-		std::invoke_result_t<F> Record(char const* actionName, SharedAllocatedSize const& allocatorStats, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedUs = nullptr)
+		std::invoke_result_t<F> Record(char const* actionName, SharedAllocatedSize const& allocatorStats, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedTicks = nullptr)
 		{
-			return Record(actionName, 1, allocatorStats, std::move(action), statsPtr, elapsedUs);
+			return Record(actionName, 1, allocatorStats, std::move(action), statsPtr, elapsedTicks);
 		}
 
 		template <class F>
-		std::invoke_result_t<F> Record(char const* actionName, int repeats, SharedAllocatedSize const& allocatorStats, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedUs = nullptr)
+		std::invoke_result_t<F> Record(char const* actionName, int repeats, SharedAllocatedSize const& allocatorStats, F action, ActionStats** statsPtr = nullptr, int64_t* elapsedTicks = nullptr)
 		{
 			auto initialMemory = allocatorStats != nullptr ? allocatorStats->load() : int64_t(TotalAllocatedSize.load());
 			Stopwatch actionTimer;
@@ -577,13 +613,13 @@ namespace GeoToolbox
 				result = action();
 			}
 
-			auto const us = actionTimer.ElapsedMicroseconds();
-			if (elapsedUs != nullptr)
+			auto const elapsed = actionTimer.ElapsedTicks();
+			if (elapsedTicks != nullptr)
 			{
-				*elapsedUs = us;
+				*elapsedTicks = elapsed;
 			}
 
-			auto& stats = AddSample(actionName, us, repeats, (allocatorStats != nullptr ? allocatorStats->load() : int64_t(TotalAllocatedSize.load())) - initialMemory);
+			auto& stats = AddSample(actionName, elapsed, repeats, (allocatorStats != nullptr ? allocatorStats->load() : int64_t(TotalAllocatedSize.load())) - initialMemory);
 			if (statsPtr != nullptr)
 			{
 				*statsPtr = &stats;
@@ -606,7 +642,7 @@ namespace GeoToolbox
 				return true;
 			}
 
-			auto const time = timer_.ElapsedMicroseconds() - iterationStartTime_;
+			auto const time = timer_.ElapsedTicks() - iterationStartTime_;
 			if (time < bestIterationTime_)
 			{
 				bestIterationTime_ = time;
@@ -623,14 +659,14 @@ namespace GeoToolbox
 				++notImprovedRuns_;
 			}
 
-			if (iterationCount_ >= maximumIterationCount_ || timer_.ElapsedMicroseconds() > minimumRunningTimeUs_ && (stopWhenNotImprovedNTimes_ <= 0 || notImprovedRuns_ >= stopWhenNotImprovedNTimes_))
+			if (iterationCount_ >= maximumIterationCount_ || timer_.ElapsedTicks() > minimumRunningTime_ && (stopWhenNotImprovedNTimes_ <= 0 || notImprovedRuns_ >= stopWhenNotImprovedNTimes_))
 			{
-				totalRunningTime_ = timer_.ElapsedMicroseconds();
+				totalRunningTime_ = timer_.ElapsedTicks();
 				return false;
 			}
 
 			++iterationCount_;
-			iterationStartTime_ = timer_.ElapsedMicroseconds();
+			iterationStartTime_ = timer_.ElapsedTicks();
 			return true;
 		}
 
@@ -639,8 +675,8 @@ namespace GeoToolbox
 			std::ostringstream buffer;
 			for (auto const& action : actions)
 			{
-				buffer << action.first << ": " << PrintMicroSeconds(action.second.bestTime)
-					<< " / " << action.second.iterationCount << " iterations in " << PrintMicroSeconds(action.second.totalTime);
+				buffer << action.first << ": " << PrintMicroSeconds(ToMicroseconds(action.second.bestTime))
+					<< " / " << action.second.iterationCount << " iterations in " << PrintMicroSeconds(ToMicroseconds(action.second.totalTime));
 				if (action.second.memoryDelta != 0)
 				{
 					buffer << ", mem delta: " << action.second.memoryDelta;
@@ -655,7 +691,7 @@ namespace GeoToolbox
 		[[nodiscard]] std::string Print() const
 		{
 			std::ostringstream buffer;
-			buffer << "Total time: " << PrintMicroSeconds(totalRunningTime_) << ", iterations: " << iterationCount_ << '\n' << Print(actions_);
+			buffer << "Total time: " << PrintMicroSeconds(ToMicroseconds(totalRunningTime_)) << ", iterations: " << iterationCount_ << '\n' << Print(actions_);
 
 			return buffer.str();
 		}

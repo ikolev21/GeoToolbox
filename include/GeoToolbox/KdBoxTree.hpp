@@ -60,34 +60,12 @@ namespace GeoToolbox
 		struct KdBoxTreeNode_BoxData
 		{
 			int middleChild = -1;
-			// An std::bitset would serve better, but unfortunately it's size cannot be controlled, and GCC uses 64 bits while 32 are enough for us
-			std::uint32_t lockedAxesMask = 0;
 		};
 
 		template <>
 		struct KdBoxTreeNode_BoxData<0>
 		{
 		};
-
-		template <class TVector>
-		[[nodiscard]] auto GetMaxDistanceSquared(TVector const& point, Box<TVector> const& box)
-		{
-			typename VectorTraits<TVector>::ScalarType result{ 0 };
-			auto const center = box.Center();
-			for (auto i = 0; i < VectorTraits<TVector>::Dimensions; ++i)
-			{
-				if (point[i] <= center[i])
-				{
-					result += Square(box.Max()[i] - point[i]);
-				}
-				else
-				{
-					result += Square(point[i] - box.Min()[i]);
-				}
-			}
-
-			return result;
-		}
 	}
 
 	// A static k-d tree that supports boxes. The boxes that intersect the splitting plane are pushed into a new node that gets split further down by the other axes.
@@ -313,7 +291,7 @@ namespace GeoToolbox
 				result.reserve(32);
 			}
 
-			auto const maxPossibleDistance2 = Detail::GetMaxDistanceSquared(targetLocation, nodes_[0].box);
+			auto const maxPossibleDistance2 = GetMaxDistanceSquared(targetLocation, nodes_[0].box);
 
 			NearQueryData data{ targetLocation, nearestCount, maxDistance <= 0 ? maxPossibleDistance2 : std::min(maxPossibleDistance2, Square(maxDistance)), result };
 			auto const distanceToFullBox = GetDistanceSquared(targetLocation, nodes_[0].box);
@@ -602,6 +580,9 @@ namespace GeoToolbox
 
 	public:
 		int8_t splitAxis;
+		// The axis this node must not be split by, -1 for none - a middle child's elements all cross the plane its parent was split by.
+		// It sits here rather than in boxData because here it fits in the padding after splitAxis
+		int8_t lockedAxis;
 		Detail::KdBoxTreeNode_BoxData<IsSpecialization<SpatialKeyType, Box> ? VectorTraits<VectorType>::Dimensions : 0> boxData;
 		Box<VectorType> box;
 
@@ -609,6 +590,7 @@ namespace GeoToolbox
 		Node(IndexType elementsCount, BoxType const& box)
 			: parent{ -1 }
 			, splitAxis{ -1 }
+			, lockedAxis{ -1 }
 			, box{ box }
 		{
 			elementsBegin = 0;
@@ -618,6 +600,7 @@ namespace GeoToolbox
 		Node(int parent, IndexType elementsBegin_, IndexType elementsEnd_, BoxType const& box)
 			: parent{ parent }
 			, splitAxis{ -1 }
+			, lockedAxis{ -1 }
 			, box{ box }
 		{
 			elementsBegin = elementsBegin_;
@@ -641,14 +624,7 @@ namespace GeoToolbox
 
 		[[nodiscard]] bool IsAxisLocked(int axis) const noexcept
 		{
-			if constexpr (IsSpecialization<SpatialKeyType, Box>)
-			{
-				return (boxData.lockedAxesMask & (1 << axis)) != 0;
-			}
-			else
-			{
-				return false;
-			}
+			return lockedAxis == axis;
 		}
 
 		[[nodiscard]] IndexType GetElementsCount() const noexcept
@@ -1085,18 +1061,34 @@ namespace GeoToolbox
 		}
 		else
 		{
-			auto splitAxis = -1;
-			auto maxSize = ScalarType(0);
-			for (auto axisIndex = 0; axisIndex < VectorTraitsType::Dimensions; ++axisIndex)
+			// A failed split leaves the tree unchanged, so an axis that fails to separate the elements can be followed by the next largest one
+			auto const boxMin = node.box.Min();
+			auto const lockedAxis = node.lockedAxis;
+			for (auto triedAxes = 0u;;)
 			{
-				if (sizes[axisIndex] > maxSize && !node.IsAxisLocked(axisIndex))
+				auto splitAxis = -1;
+				auto maxSize = ScalarType(0);
+				for (auto axisIndex = 0; axisIndex < VectorTraitsType::Dimensions; ++axisIndex)
 				{
-					maxSize = sizes[axisIndex];
-					splitAxis = axisIndex;
+					if (sizes[axisIndex] > maxSize && axisIndex != lockedAxis && (triedAxes & (1u << axisIndex)) == 0)
+					{
+						maxSize = sizes[axisIndex];
+						splitAxis = axisIndex;
+					}
 				}
-			}
 
-			return splitAxis >= 0 && SplitNode(nodeIndex, splitAxis, node.box.Min()[splitAxis] + maxSize / 2);
+				if (splitAxis < 0)
+				{
+					return false;
+				}
+
+				if (SplitNode(nodeIndex, splitAxis, boxMin[splitAxis] + maxSize / 2))
+				{
+					return true;
+				}
+
+				triedAxes |= 1u << splitAxis;
+			}
 		}
 	}
 
@@ -1145,7 +1137,7 @@ namespace GeoToolbox
 				auto const newBox = Bound(node->elementsBegin + lowCount, middleCount);
 				node->boxData.middleChild = int(nodes_.size());
 				auto& middleNode = nodes_.emplace_back(Node{ nodeIndex, node->elementsBegin + lowCount, node->elementsEnd - highCount, newBox });
-				middleNode.boxData.lockedAxesMask |= 1 << splitAxis;
+				middleNode.lockedAxis = int8_t(splitAxis);
 				node = nodes_.data() + nodeIndex;
 			}
 		}

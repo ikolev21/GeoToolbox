@@ -44,6 +44,8 @@ Two test scenarios are executed:
 
 Individual operations (load, insert, erase, query, destroy) are measured separately and recorded, along with the total running time.
 
+The query list combines a regular grid over the dataset bounding box with the centres of random features drawn from the dataset. The grid queries hit mostly empty space (especially on clustered data), which effectively measures how fast an index proves emptiness. The query boxes cover a small fixed share of the bounding box volume, to avoid returning too many results. Range queries are therefore mostly bound by how quickly an index descends to the right place rather than by how quickly it hands back results.
+
 These parameters can be varied and filtered out with a runtime configuration:
 
 * Spatial key type: point or box, `float` or `double` scalar type, dimensions (2 and 3 are tested, more are possible)
@@ -52,9 +54,9 @@ These parameters can be varied and filtered out with a runtime configuration:
   * synthetic:
     * uniform distribution
     * skewed distribution over one of the axes, like (x, y<sup>4</sup>)
-    * islands (keys are gathered around a few distant centers)
+    * clusters (32 clusters of Zipf-distributed populations, each covering a share of the extent's volume proportional to its population)
     * polygon (keys are arranged in two concentric circles)
-    * (for boxes) skewed aspect, averaging around 100x1
+    * (for boxes) parcels: a cadastre, the extent recursively split into one cell per feature, covering it exactly and overlapping nowhere, then turned by 5&deg; so that the boxes around the cells overlap as real ones do, with cell areas spanning four decades and aspect ratios up to 1:10
   * real-world: loaded from ESRI shape or Wavefront OBJ files
 * The size of the dataset, by power of 10.
 
@@ -87,26 +89,52 @@ The fastest index per combination of key type and query type is given in the tab
 
 | Key type \ Query | Range (box window) | Nearest (k closest) |
 | --- | --- | --- |
-| **Point** | KdBoxTree *(nanoflann ties at small sizes)* | nanoflann *(KdBoxTree on the Polygon dataset, and at 10<sup>6</sup>)* |
-| **Box** | KdBoxTree *(GEOS matches or edges it on large low-clustering 2D sets, ~10<sup>5</sup>)* | KdBoxTree *(only it and Boost implement it)* |
+| **Point** | KdBoxTree *(nanoflann is faster up to 10<sup>3</sup>, and within a few percent overall)* | nanoflann *(KdBoxTree draws level at 10<sup>5</sup> and wins at 10<sup>6</sup>, and on the Polygon dataset from 10<sup>4</sup>)* |
+| **Box** | KdBoxTree *(GEOS is faster on the Polygon dataset, tidwall on 2D sets around 10<sup>4</sup>-10<sup>5</sup>)* | KdBoxTree *(only it and Boost implement it)* |
 
 Some conclusions that can be drawn:
 
-* No single index wins everything, but **KdBoxTree** is the most well-rounded: it is the quickest to bulk-load, the fastest at range queries on both point and box keys, and the fastest at nearest queries on box keys, trailing only nanoflann on the point proximity query it was not specialized for, but at the same time fixing nanoflann's weakness on the Polygon dataset. It also offers flexibility, ease of use, and a clean C++17 implementation.
-* **Nanoflann** does best what it was designed for, proximity queries on point keys, and uses by far the least memory. That lead holds for typical point clouds but fades on the clustered Islands and structured Polygon datasets, and at the largest sizes (10<sup>6</sup>), where KdBoxTree overtakes it. It is not competitive for range queries, though it can be adapted to box keys by treating each box as a 2N-dimensional point (range queries only).
-* **GEOS** STR-tree is strong at what it was designed for, range queries over 2D boxes, matching or slightly beating KdBoxTree on large low-clustering 2D box sets around 10<sup>5</sup> elements. It is limited to 2D `double` keys, does no nearest queries, and treats points as degenerate boxes (so it is slower on point keys).
+* No single index wins everything, but **KdBoxTree** is the most well-rounded: it is the quickest to bulk-load, the fastest at range queries on box keys and, from 10<sup>4</sup> elements up, on point keys too, and the fastest at nearest queries on box keys, trailing only nanoflann on the point proximity query it was not specialized for, and overtaking it there too at 10<sup>6</sup> and on the Polygon dataset. It also offers flexibility, ease of use, and a clean C++17 implementation.
+* **Nanoflann** does best what it was designed for, proximity queries on points, and uses the least memory. The advantage holds up to 10<sup>5</sup>, at 10<sup>6</sup> KdBoxTree is 1.5-2x ahead, as it is on the structured Polygon dataset from 10<sup>4</sup> up. Nanoflann is competitive at range queries on point keys as well, but not on box keys, where representing a box as a 2N-dimensional point costs it about 2x.
+* **GEOS** STR-tree is strong at what it was designed for, range queries over 2D boxes. It is the fastest on the Polygon dataset at every size, and behind on every other one at 10<sup>5</sup>. It is limited to 2D `double` keys, does no nearest queries, and treats points as degenerate boxes (so it is slower on point keys). Packing its own copy of the envelopes also makes it the index least sensitive to the order the data arrives in.
 * A rather important detail about the GEOS indices is that they have a performance problem on Windows with the MSVC compiler, queries run 2-3 times slower than with Clang.  
 This is caused by a missed optimization in MSVC, [reported here](https://developercommunity.visualstudio.com/t/MSVC-O2-lowers-std::islessequal-to-_dpc/11129102).  
 The effect is recorded in the [results file](https://github.com/ikolev21/ikolev21.github.io/blob/main/CompareSpatialIndices_GEOS.tsv).  
 Included is a patch `patches/geos-3.14.1/Envelope.h.diff` that works around the problem, bringing MSVC on par with Clang. The results uploaded at the link above have the patch applied.  
 Hopefully the official distribution of PostgreSQL+PostGIS on Windows is **not** compiled with MSVC.
 * Boost R-tree lags behind in query performance, but is the most versatile (as the full row of +'s in the table above shows) and, together with tidwall, the only tree index here that supports dynamic insert/erase.
-* The tidwall R-tree sits between GEOS and Boost, both in terms of performance and versatility.
-* Memory usage (the index's own footprint, roughly constant per element) is by far the lowest in nanoflann - about 9 bytes per point and 13 per box, some 3.7-7x leaner than the rest - because it stores only an index into the caller's dataset, a limitation that may require an additional vector allocation that isn't measured here. The other indices work with pointers to the elements and impose no such restriction on the client's data.  
-KdBoxTree is the next leanest overall (about 30 bytes per 2D point, 47 per box). It offers an option to store an extra copy of the spatial keys to speed up building and queries (the `StoreSpatialKeys` template flag). The results above are measured with the option enabled. Turning it off drops KdBoxTree to a pointer-only footprint, leaner than Boost, at the cost of roughly 1.2x slower builds and queries at the largest sizes.  
-Boost is close behind at a flat ~43 bytes per element (points and boxes alike, since it always stores a bounding box - for box keys KdBoxTree's extra key copy actually edges just past it), then GEOS (~58) and tidwall (~67, the heaviest).
+* The tidwall R-tree is the better of the two dynamic indices, faster than Boost at insert/erase/reinsert and at querying afterwards; its dimensions and scalar type are fixed at compilation time. Having no bulk-loading, it builds by insertion, which also makes it the index most sensitive to the order the data arrives in: it matches KdBoxTree at box range queries over moderate, evenly spread datasets, and falls behind as they grow larger and less evenly spread.
+* Memory usage is the lowest in nanoflann, because it stores only an index into the caller's dataset, a limitation that may require an additional vector allocation that isn't measured here. The other indices work with pointers to the elements and impose no such restriction on the client's data.  
+KdBoxTree comes next on point keys, followed by Boost. It offers an option to store an extra copy of the spatial keys to speed up building and queries (the `StoreSpatialKeys` template flag). The linked results are measured with the option enabled, which on box keys puts it slightly above Boost. Turning it off drops KdBoxTree to a pointer-only footprint, leaner than Boost, at the cost of roughly 1.2x slower builds and queries at the largest sizes.  
+Then follow GEOS and tidwall (the heaviest).
+* The two compilers agree on the conclusions above, but not always on the margins, so both are measured.
+* A real, strongly anisotropic 3D dataset was tried and changes nothing, it ranks the indices exactly as the synthetic 3D sets do. It is available as a `CoralGables_Lidar` option but is not part of the published results.
+
+### When an index is worth building
+
+A `std::vector` needs no index to build, so it wins as long as few enough queries follow. The table below gives the number of queries after which building a KdBoxTree and querying it costs less than scanning the vector, on the worst of the datasets at each size.
+
+| Dataset size | Range, point | Range, box | Nearest, point | Nearest, box |
+| --- | --- | --- | --- | --- |
+| 10<sup>2</sup> | 37 | 40 | 22 | 14 |
+| 10<sup>3</sup> | 52 | 52 | 22 | 7 |
+| 10<sup>4</sup> | 27 | 33 | 58 | 10 |
+| 10<sup>5</sup> | 30 | 33 | 97 | 16 |
+
+A hundred queries are therefore enough to pay for the index in every case measured here, and the count barely depends on the size: building costs roughly a constant amount of work per element, and so does a scan of it, so the two grow together. With Clang the same counts reach 144, its KdBoxTree being the slower to build. The other indices need 1.5-4x more queries to get there, mostly because they build 2-4x slower.
+
+What the size does decide is how much there is to win, and there the rule of thumb is simple. At 10<sup>2</sup> elements an index is usually not worth building: the gain tops out at 1.2-2x however many queries follow. At 10<sup>3</sup> and above it usually is: a hundred queries already make it 2-4x faster overall, a thousand 3-8x, and both factors keep growing with the size of the dataset - at 10<sup>5</sup> elements and 10<sup>4</sup> queries it is 60-180x.
 
 ## History
+
+* 2026-09-06
+  - Changed the test queries distribution, now 25% of them are on a grid over the dataset bounding box, the rest are centred on features drawn from the dataset
+  - The query boxes are now sized by volume share, not by the smallest extent
+  - Datasets that are not random by construction (the ones loaded from files, and Polygon) are now shuffled before use, so that no index is handed an ordering advantage the others cannot use
+  - Synthetic_Islands dataset replaced by Synthetic_Clusters, added Synthetic_Parcels, Texas_NewMex_Blocks, Utah_Buildings, CoralGables_Lidar
+  - KdBoxTree small improvements
+  - Added export of datasets to PLY
+  - Small additions and improvements
 
 * 2026-08-01
   - Added own KdBoxTree

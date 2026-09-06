@@ -22,7 +22,7 @@ TEST_CASE("KdBoxTree_Performance", "[.Performance]")
 		{ "DatasetSize", "5" },
 		//{ "MinDatasetSize", "3" },
 		//{ "MaxDatasetSize", "4" },
-		{ "Dataset", "Synthetic_Uniform,Synthetic_Islands,Synthetic_Aspect,Synthetic_Polygon" },
+		{ "Dataset", "Synthetic_Uniform,Synthetic_Clusters,Synthetic_Polygon" },
 		{ "Scenario", "Load" },
 		{ "SpatialKey", "point" },
 		{ "Vector", "array2d" }
